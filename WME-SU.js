@@ -1415,11 +1415,8 @@
     // Verify jQuery is available
     if (typeof $ === 'undefined' || typeof jQuery === 'undefined') {
       logError('jQuery NOT available! segment.wme events cannot be registered.');
-      logWarning('Check if WazeWrap or WME-Base loads jQuery');
     } else {
-      logDebug('jQuery IS available, registering segment.wme event handlers');
-      logDebug(`jQuery version: ${jQuery.fn.jquery || 'unknown'}`);
-      logDebug(`document.readyState: ${document.readyState}`);
+      logDebug(`jQuery v${jQuery.fn.jquery || 'unknown'} available, registering event handlers`);
     }
 
     // Debug: Log all jQuery events to see what's firing
@@ -1438,64 +1435,32 @@
       logDebug('jQuery event trigger monitoring enabled (logging .wme and object-related events)');
     }
 
-    // Test: trigger a test event to verify jQuery event system works
-    $(document).on('test.wme-su', (event, data) => {
-      logDebug('✓ Test event listener WORKS, received:', data);
-    });
-    $(document).trigger('test.wme-su', [{test: true}]);
-    logDebug('Test event triggered on document');
-
-    $(document).on('segment.wme', (event, element, model) => {
-      logDebug(`✓ segment.wme event RECEIVED for segment ${model?.id || 'unknown'}`);
-      if (element) {
-        logDebug(`Element: <${element.tagName}> with classes: "${element.className}"`);
-        logDebug(`Element attributes:`, {
-          id: element.id,
-          'data-*': Array.from(element.attributes)
-            .filter(attr => attr.name.startsWith('data-'))
-            .map(attr => `${attr.name}="${attr.value}"`)
-            .join(', '),
-        });
-        logDebug(`Element innerHTML length: ${element.innerHTML?.length || 0} chars`);
-      } else {
-        logWarning('segment.wme event element is null/undefined');
+    // Listen for segment.wme jQuery events (fallback if WME starts firing them)
+    $(document).on('segment.wme', (_event, element, model) => {
+      logDebug(`segment.wme fired for segment ${model?.id}`);
+      if (!wmeSdk.DataModel.Segments.hasPermissions({ segmentId: model.id })) {
+        element.querySelector('div.wme-su-segment-edit-panel')?.remove();
+        return;
       }
 
-      // Check if user has edit permissions
-      if (wmeSdk.DataModel.Segments.hasPermissions({ segmentId: model.id })) {
-        try {
+      try {
+        const existingPanel = element.querySelector('div.wme-su-segment-edit-panel');
+        if (!existingPanel) {
           const panel = createSegmentEditButtonPanel();
-          const existingPanel = element.querySelector('div.wme-su-segment-edit-panel');
-          if (existingPanel) {
-            logDebug(`Found existing panel, replacing`);
-            existingPanel.replaceWith(panel);
-          } else {
-            logDebug(`No existing panel found, prepending new one`);
-            element.prepend(panel);
-          }
-          logDebug(`Button panel inserted/updated for segment ${model.id}`);
-        } catch (err) {
-          logWarning(`Error inserting button panel:`, err);
+          element.prepend(panel);
         }
-      } else {
-        // Remove panel if no permissions
-        element.querySelector('div.wme-su-segment-edit-panel')?.remove();
-        logDebug(`No permissions for segment ${model.id}, panel removed`);
+      } catch (err) {
+        logWarning(`Error in segment.wme handler:`, err);
       }
     });
 
     // Fallback: Use MutationObserver to detect when Segment Edit panel changes
-    logDebug('Setting up MutationObserver to monitor Segment Edit panel');
-    const targetNode = document.body;
-    const config = { childList: true, subtree: true };
-
+    // (segment.wme jQuery events don't fire in current WME version)
     const observer = new MutationObserver((_mutations) => {
-      // Check if segments are selected and panel exists
       const selection = wmeSdk.Editing.getSelection();
       if (selection?.objectType === 'segment' && selection?.ids?.length > 0) {
         const existingButton = document.getElementById('WME-SU-SEGMENT-EDIT');
         if (!existingButton) {
-          logDebug('MutationObserver: Segments selected but button not found, attempting to insert');
 
           // More specific selectors for Segment Edit panel (the right sidebar)
           let segmentEditPanel = null;
@@ -1535,43 +1500,36 @@
           }
 
           if (segmentEditPanel && !segmentEditPanel.querySelector('div.wme-su-segment-edit-panel')) {
-            logDebug(`MutationObserver: Inserting into <${segmentEditPanel.tagName}> with classes: "${segmentEditPanel.className}"`);
             const panel = createSegmentEditButtonPanel();
             segmentEditPanel.prepend(panel);
-            logDebug('MutationObserver: Button inserted into panel');
-          } else if (!segmentEditPanel) {
-            logDebug('MutationObserver: Could not find Segment Edit panel');
-          } else {
-            logDebug('MutationObserver: Button already exists in panel');
+            logDebug('Button inserted into Segment Edit panel');
           }
         }
       }
     });
 
-    observer.observe(targetNode, config);
-    logDebug('MutationObserver activated');
+    observer.observe(document.body, { childList: true, subtree: true });
 
-    $(document).on('segments.wme', (event, element, models) => {
-      logDebug(`segments.wme event fired for ${models.length} segments`);
-      // Check if any segments have edit permissions and are drivable
+    $(document).on('segments.wme', (_event, element, models) => {
+      logDebug(`segments.wme fired for ${models.length} segments`);
       const hasEditableSegments = models.some(model =>
         wmeSdk.DataModel.Segments.isRoadTypeDrivable({ roadType: model.roadType }) &&
         wmeSdk.DataModel.Segments.hasPermissions({ segmentId: model.id })
       );
 
-      if (hasEditableSegments) {
-        const panel = createSegmentEditButtonPanel();
+      if (!hasEditableSegments) {
+        element.querySelector('div.wme-su-segment-edit-panel')?.remove();
+        return;
+      }
+
+      try {
         const existingPanel = element.querySelector('div.wme-su-segment-edit-panel');
-        if (existingPanel) {
-          existingPanel.replaceWith(panel);
-        } else {
+        if (!existingPanel) {
+          const panel = createSegmentEditButtonPanel();
           element.prepend(panel);
         }
-        logDebug(`Button panel inserted/updated for multiple segments`);
-      } else {
-        // Remove panel if no editable segments
-        element.querySelector('div.wme-su-segment-edit-panel')?.remove();
-        logDebug(`No editable segments, panel removed`);
+      } catch (err) {
+        logWarning(`Error in segments.wme handler:`, err);
       }
     });
 
