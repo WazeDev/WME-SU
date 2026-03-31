@@ -1419,10 +1419,27 @@
     } else {
       logDebug('jQuery IS available, registering segment.wme event handlers');
       logDebug(`jQuery version: ${jQuery.fn.jquery || 'unknown'}`);
+      logDebug(`document.readyState: ${document.readyState}`);
     }
 
+    // Debug: Log all jQuery events to see what's firing
+    if (debug) {
+      const originalTrigger = jQuery.fn.trigger;
+      jQuery.fn.trigger = function(eventType, ...args) {
+        if (typeof eventType === 'string' && eventType.includes('.wme')) {
+          logDebug(`jQuery event TRIGGERED: ${eventType} on`, this);
+        }
+        return originalTrigger.call(this, eventType, ...args);
+      };
+      logDebug('jQuery event trigger monitoring enabled');
+    }
+
+    // Test: trigger a test event to verify jQuery event system works
+    $(document).trigger('test.wme-su', [{test: true}]);
+    logDebug('Test event triggered on document');
+
     $(document).on('segment.wme', (event, element, model) => {
-      logDebug(`segment.wme event fired for segment ${model.id}`);
+      logDebug(`✓ segment.wme event RECEIVED for segment ${model?.id || 'unknown'}`);
       if (element) {
         logDebug(`Element: <${element.tagName}> with classes: "${element.className}"`);
         logDebug(`Element attributes:`, {
@@ -1459,6 +1476,32 @@
         logDebug(`No permissions for segment ${model.id}, panel removed`);
       }
     });
+
+    // Fallback: Use MutationObserver to detect when Segment Edit panel changes
+    logDebug('Setting up MutationObserver to monitor Segment Edit panel');
+    const targetNode = document.body;
+    const config = { childList: true, subtree: true };
+
+    const observer = new MutationObserver((_mutations) => {
+      // Check if segments are selected and panel exists
+      const selection = wmeSdk.Editing.getSelection();
+      if (selection?.objectType === 'segment' && selection?.ids?.length > 0) {
+        const existingButton = document.getElementById('WME-SU-SEGMENT-EDIT');
+        if (!existingButton) {
+          logDebug('MutationObserver: Segments selected but button not found, attempting to insert');
+          // Try to find and insert button
+          const segmentEditPanel = document.querySelector('wz-panel-card, [role="dialog"][aria-modal="true"], form');
+          if (segmentEditPanel && !segmentEditPanel.querySelector('div.wme-su-segment-edit-panel')) {
+            const panel = createSegmentEditButtonPanel();
+            segmentEditPanel.prepend(panel);
+            logDebug('MutationObserver: Button inserted into panel');
+          }
+        }
+      }
+    });
+
+    observer.observe(targetNode, config);
+    logDebug('MutationObserver activated');
 
     $(document).on('segments.wme', (event, element, models) => {
       logDebug(`segments.wme event fired for ${models.length} segments`);
