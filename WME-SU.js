@@ -1444,10 +1444,17 @@
       }
 
       try {
+        // Look for Direction section to insert after
+        const directionSection = element.querySelector('[class*="direction-editor"]');
         const existingPanel = element.querySelector('div.wme-su-segment-edit-panel');
+
         if (!existingPanel) {
           const panel = createSegmentEditButtonPanel();
-          element.prepend(panel);
+          if (directionSection) {
+            directionSection.insertAdjacentElement('afterend', panel);
+          } else {
+            element.prepend(panel);
+          }
         }
       } catch (err) {
         logWarning(`Error in segment.wme handler:`, err);
@@ -1462,47 +1469,22 @@
         const existingButton = document.getElementById('WME-SU-SEGMENT-EDIT');
         if (!existingButton) {
 
-          // More specific selectors for Segment Edit panel (the right sidebar)
-          let segmentEditPanel = null;
+          // Look for the Direction section to insert button after it
+          const directionSection = document.querySelector('[class*="direction-editor"]');
 
-          // Strategy 1: Look for panel containing segment-specific info
-          segmentEditPanel = document.querySelector('[data-test-id="segment-edit-panel"]') ||
-                            document.querySelector('[class*="segment"][class*="panel"]') ||
-                            document.querySelector('[class*="edit-panel"]');
-
-          // Strategy 2: Look for the right-side panel (usually wz-panel-card with specific hierarchy)
-          if (!segmentEditPanel) {
-            const allPanels = document.querySelectorAll('wz-panel-card');
-            for (const panel of allPanels) {
-              if (panel.textContent.toLowerCase().includes('road type') ||
-                  panel.textContent.toLowerCase().includes('speed')) {
-                segmentEditPanel = panel;
-                logDebug('MutationObserver: Found panel containing road type/speed fields');
-                break;
-              }
-            }
-          }
-
-          // Strategy 3: Look for right sidebar area
-          if (!segmentEditPanel) {
-            const rightPanel = document.querySelector('[role="complementary"]') ||
-                             document.querySelector('[class*="right"][class*="panel"]') ||
-                             document.querySelector('aside');
-            if (rightPanel) {
-              // Make sure it's the edit panel, not another sidebar
-              const hasSegmentFields = rightPanel.textContent.includes('Segment') ||
-                                     rightPanel.textContent.includes('Road Type');
-              if (hasSegmentFields) {
-                segmentEditPanel = rightPanel;
-                logDebug('MutationObserver: Found right sidebar panel with segment fields');
-              }
-            }
-          }
-
-          if (segmentEditPanel && !segmentEditPanel.querySelector('div.wme-su-segment-edit-panel')) {
+          if (directionSection && !directionSection.parentElement.querySelector('div.wme-su-segment-edit-panel')) {
             const panel = createSegmentEditButtonPanel();
-            segmentEditPanel.prepend(panel);
-            logDebug('Button inserted into Segment Edit panel');
+            // Insert after the direction section
+            directionSection.insertAdjacentElement('afterend', panel);
+            logDebug('Button inserted after Direction section');
+          } else if (!directionSection) {
+            // Fallback: if Direction section not found, try to find the form and prepend
+            const attributesForm = document.querySelector('form.attributes-form');
+            if (attributesForm && !attributesForm.querySelector('div.wme-su-segment-edit-panel')) {
+              const panel = createSegmentEditButtonPanel();
+              attributesForm.prepend(panel);
+              logDebug('Button inserted into attributes form (fallback)');
+            }
           }
         }
       }
@@ -1523,10 +1505,17 @@
       }
 
       try {
+        // Look for Direction section to insert after
+        const directionSection = element.querySelector('[class*="direction-editor"]');
         const existingPanel = element.querySelector('div.wme-su-segment-edit-panel');
+
         if (!existingPanel) {
           const panel = createSegmentEditButtonPanel();
-          element.prepend(panel);
+          if (directionSection) {
+            directionSection.insertAdjacentElement('afterend', panel);
+          } else {
+            element.prepend(panel);
+          }
         }
       } catch (err) {
         logWarning(`Error in segments.wme handler:`, err);
