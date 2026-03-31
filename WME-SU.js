@@ -1426,15 +1426,22 @@
     if (debug) {
       const originalTrigger = jQuery.fn.trigger;
       jQuery.fn.trigger = function(eventType, ...args) {
-        if (typeof eventType === 'string' && eventType.includes('.wme')) {
-          logDebug(`jQuery event TRIGGERED: ${eventType} on`, this);
+        if (typeof eventType === 'string') {
+          if (eventType.includes('.wme')) {
+            logDebug(`jQuery event TRIGGERED: ${eventType}`);
+          } else if (eventType.includes('segment') || eventType.includes('node') || eventType.includes('place')) {
+            logDebug(`jQuery event TRIGGERED (non-.wme): ${eventType}`);
+          }
         }
         return originalTrigger.call(this, eventType, ...args);
       };
-      logDebug('jQuery event trigger monitoring enabled');
+      logDebug('jQuery event trigger monitoring enabled (logging .wme and object-related events)');
     }
 
     // Test: trigger a test event to verify jQuery event system works
+    $(document).on('test.wme-su', (event, data) => {
+      logDebug('✓ Test event listener WORKS, received:', data);
+    });
     $(document).trigger('test.wme-su', [{test: true}]);
     logDebug('Test event triggered on document');
 
@@ -1489,12 +1496,53 @@
         const existingButton = document.getElementById('WME-SU-SEGMENT-EDIT');
         if (!existingButton) {
           logDebug('MutationObserver: Segments selected but button not found, attempting to insert');
-          // Try to find and insert button
-          const segmentEditPanel = document.querySelector('wz-panel-card, [role="dialog"][aria-modal="true"], form');
+
+          // More specific selectors for Segment Edit panel (the right sidebar)
+          let segmentEditPanel = null;
+
+          // Strategy 1: Look for panel containing segment-specific info
+          segmentEditPanel = document.querySelector('[data-test-id="segment-edit-panel"]') ||
+                            document.querySelector('[class*="segment"][class*="panel"]') ||
+                            document.querySelector('[class*="edit-panel"]');
+
+          // Strategy 2: Look for the right-side panel (usually wz-panel-card with specific hierarchy)
+          if (!segmentEditPanel) {
+            const allPanels = document.querySelectorAll('wz-panel-card');
+            for (const panel of allPanels) {
+              if (panel.textContent.toLowerCase().includes('road type') ||
+                  panel.textContent.toLowerCase().includes('speed')) {
+                segmentEditPanel = panel;
+                logDebug('MutationObserver: Found panel containing road type/speed fields');
+                break;
+              }
+            }
+          }
+
+          // Strategy 3: Look for right sidebar area
+          if (!segmentEditPanel) {
+            const rightPanel = document.querySelector('[role="complementary"]') ||
+                             document.querySelector('[class*="right"][class*="panel"]') ||
+                             document.querySelector('aside');
+            if (rightPanel) {
+              // Make sure it's the edit panel, not another sidebar
+              const hasSegmentFields = rightPanel.textContent.includes('Segment') ||
+                                     rightPanel.textContent.includes('Road Type');
+              if (hasSegmentFields) {
+                segmentEditPanel = rightPanel;
+                logDebug('MutationObserver: Found right sidebar panel with segment fields');
+              }
+            }
+          }
+
           if (segmentEditPanel && !segmentEditPanel.querySelector('div.wme-su-segment-edit-panel')) {
+            logDebug(`MutationObserver: Inserting into <${segmentEditPanel.tagName}> with classes: "${segmentEditPanel.className}"`);
             const panel = createSegmentEditButtonPanel();
             segmentEditPanel.prepend(panel);
             logDebug('MutationObserver: Button inserted into panel');
+          } else if (!segmentEditPanel) {
+            logDebug('MutationObserver: Could not find Segment Edit panel');
+          } else {
+            logDebug('MutationObserver: Button already exists in panel');
           }
         }
       }
