@@ -75,6 +75,83 @@
     return segments;
   }
 
+  /**
+   * Detects if selected segments form a continuous connected path
+   * Returns true if segments have multiple disconnected components
+   * @param {Object[]} segments - Array of segment objects
+   * @returns {boolean} True if multiple connected components detected (non-continuous)
+   */
+  function hasMultipleConnectedComponents(segments) {
+    if (!segments || segments.length <= 1) {
+      return false;
+    }
+
+    try {
+      // Build a map of node IDs to segments that use that node
+      const nodeToSegments = {};
+
+      segments.forEach(seg => {
+        if (!seg?.fromNodeId || !seg?.toNodeId) {
+          logWarning(`Segment ${seg?.id} missing node IDs, skipping connectivity check`);
+          return;
+        }
+
+        if (!nodeToSegments[seg.fromNodeId]) nodeToSegments[seg.fromNodeId] = [];
+        if (!nodeToSegments[seg.toNodeId]) nodeToSegments[seg.toNodeId] = [];
+
+        nodeToSegments[seg.fromNodeId].push(seg.id);
+        nodeToSegments[seg.toNodeId].push(seg.id);
+      });
+
+      // Track which segments belong to which connected component using union-find
+      const componentMap = new Map(); // segmentId -> componentId
+      let componentCount = 0;
+
+      // Assign segments to connected components
+      const visited = new Set();
+
+      for (const segment of segments) {
+        if (visited.has(segment.id)) continue;
+
+        // BFS to find all segments in this connected component
+        const queue = [segment.id];
+        const component = componentCount++;
+
+        while (queue.length > 0) {
+          const segId = queue.shift();
+          if (visited.has(segId)) continue;
+
+          visited.add(segId);
+          componentMap.set(segId, component);
+
+          // Find the actual segment object
+          const seg = segments.find(s => s.id === segId);
+          if (!seg) continue;
+
+          // Find other segments connected through this segment's nodes
+          const connectedNodeIds = [seg.fromNodeId, seg.toNodeId];
+          connectedNodeIds.forEach(nodeId => {
+            if (nodeToSegments[nodeId]) {
+              nodeToSegments[nodeId].forEach(connectedSegId => {
+                if (!visited.has(connectedSegId)) {
+                  queue.push(connectedSegId);
+                }
+              });
+            }
+          });
+        }
+      }
+
+      const isNonContinuous = componentCount > 1;
+      logDebug(`Segment connectivity check: ${componentCount} connected component(s) - ${isNonContinuous ? 'NON-CONTINUOUS' : 'continuous'}`);
+
+      return isNonContinuous;
+    } catch (err) {
+      logError('Error checking segment connectivity:', err);
+      return false; // Assume continuous on error to allow proceeding
+    }
+  }
+
   // ===== SHORTCUT VALIDATION & MIGRATION =====
   /**
    * Validates and migrates shortcut from any format to { raw, combo }
@@ -542,11 +619,12 @@
     const selection = wmeSdk.Editing.getSelection();
     logDebug(`Selection: ${selection ? `objectType=${selection.objectType}, ids=${selection.ids?.length || 0}` : 'null'}`);
 
+    const segments = selection && selection.objectType === 'segment' && selection.ids ? getSegmentsByIds(selection.ids) : [];
     const segmentSelection = {
-      segments: selection && selection.objectType === 'segment' && selection.ids ? getSegmentsByIds(selection.ids) : [],
-      multipleConnectedComponents: false, // TODO: determine from segment topology
+      segments: segments,
+      multipleConnectedComponents: hasMultipleConnectedComponents(segments),
     };
-    logDebug(`Segment selection: ${segmentSelection.segments.length} segments found`);
+    logDebug(`Segment selection: ${segmentSelection.segments.length} segments found, multipleConnectedComponents=${segmentSelection.multipleConnectedComponents}`);
 
     // ════════════════════════════════════════════════════════════════════════════════
     // SECTION 2: EXECUTE STRAIGHTENING (if all validations passed)
