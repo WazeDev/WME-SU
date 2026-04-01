@@ -8,6 +8,7 @@
 // @exclude     http*://*.waze.com/user/editor*
 // @require     https://greasyfork.org/scripts/509664/code/WME%20Utils%20-%20Bootstrap.js
 // @require     https://greasyfork.org/scripts/24851-wazewrap/code/WazeWrap.js
+// @require     https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js
 // @grant       GM_xmlhttpRequest
 // @connect     greasyfork.org
 // @license     GPLv3
@@ -15,7 +16,7 @@
 
 // Original credit to jonny3D and impulse200, dBsooner
 
-/* global I18n, GM_info, GM_xmlhttpRequest, WazeWrap, bootstrap, $, jQuery */
+/* global I18n, GM_info, GM_xmlhttpRequest, WazeWrap, bootstrap, $, jQuery, turf */
 
 (async function () {
   'use strict';
@@ -45,6 +46,9 @@
     select: document.createElement('select'),
     'wz-button': document.createElement('wz-button'),
     'wz-card': document.createElement('wz-card'),
+    'wz-chip': document.createElement('wz-chip'),
+    'wz-chip-select': document.createElement('wz-chip-select'),
+    'wz-checkable-chip': document.createElement('wz-checkable-chip'),
   };
 
   // ── Settings & timeouts ──────────────────────────────────────────────
@@ -464,23 +468,6 @@
   }
 
   /**
-   * Calculates intersection of perpendicular from point to inclined line
-   * Used for straightening: finds where each node should move to
-   * @param {number} a - Line equation parameter (slope y)
-   * @param {number} b - Line equation parameter (slope x)
-   * @param {number} c - Line equation constant
-   * @param {number} d - Point equation constant
-   * @returns {{x: number, y: number}} Intersection coordinates
-   */
-  function getIntersectCoord(a, b, c, d) {
-    const r = [2];
-    // eslint-disable-next-line no-mixed-operators
-    r[1] = (-1.0 * (c * b - a * d)) / (a * a + b * b);
-    r[0] = (-r[1] * (b + a) - c + d) / (a - b);
-    return { x: r[0], y: r[1] };
-  }
-
-  /**
    * Determines direction indicator between two coordinates
    * @param {number} a - First coordinate
    * @param {number} b - Second coordinate
@@ -534,27 +521,76 @@
   }
 
   /**
-   * Calculates distance between two WGS84 (EPSG:4326) coordinates using Haversine formula
+   * Calculates distance between two WGS84 (EPSG:4326) coordinates using Turf.js
+   * Wrapper around turf.distance() for compatibility with existing code
    * @param {number} lon1 - Longitude 1
    * @param {number} lat1 - Latitude 1
    * @param {number} lon2 - Longitude 2
    * @param {number} lat2 - Latitude 2
-   * @param {string} [measurement='kilometers'] - Unit: 'meters', 'miles', 'feet', or 'kilometers'
+   * @param {string} [measurement='kilometers'] - Unit: 'meters', 'miles', 'feet', 'kilometers', 'nautical miles', 'degrees', or 'radians'
    * @returns {number} Distance in specified unit
    */
-  function distanceBetweenPoints(lon1, lat1, lon2, lat2, measurement) {
-    // eslint-disable-next-line no-nested-ternary
-    const multiplier = measurement === 'meters' ? 1000 : measurement === 'miles' ? 0.621371192237334 : measurement === 'feet' ? 3280.8398950131 : 1;
-    const R = 6371; // KM
-    const φ1 = lat1 * (Math.PI / 180);
-    const φ2 = lat2 * (Math.PI / 180);
-    const Δφ = (lat2 - lat1) * (Math.PI / 180);
-    const Δλ = (lon2 - lon1) * (Math.PI / 180);
-    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const d = R * c;
-    return d * multiplier;
+  function distanceBetweenPoints(lon1, lat1, lon2, lat2, measurement = 'kilometers') {
+    // Turf.distance expects [lon, lat] coordinates
+    const from = [lon1, lat1];
+    const to = [lon2, lat2];
+
+    // Map measurement names to Turf units (turf uses 'meters', 'miles', 'feet', etc.)
+    const unitMap = {
+      'meters': 'meters',
+      'miles': 'miles',
+      'feet': 'feet',
+      'kilometers': 'kilometers',
+      'nm': 'nauticalmiles',
+      'nautical miles': 'nauticalmiles',
+      'degrees': 'degrees',
+      'radians': 'radians'
+    };
+
+    const turfUnit = unitMap[measurement] || 'kilometers';
+    return turf.distance(from, to, { units: turfUnit });
   }
+
+  /**
+   * Calculates angle at point2 using dot product of vectors
+   * Used for detecting nearly-straight geometry nodes
+   * @param {number[]} point1 - First point [lon, lat]
+   * @param {number[]} point2 - Middle point (vertex) [lon, lat]
+   * @param {number[]} point3 - Third point [lon, lat]
+   * @returns {number} Angle in degrees (0-180)
+   */
+  function calculateAngle(point1, point2, point3) {
+    const v1 = [point1[0] - point2[0], point1[1] - point2[1]];
+    const v2 = [point3[0] - point2[0], point3[1] - point2[1]];
+    const dotProduct = v1[0] * v2[0] + v1[1] * v2[1];
+    const mag1 = Math.sqrt(v1[0] * v1[0] + v1[1] * v1[1]);
+    const mag2 = Math.sqrt(v2[0] * v2[0] + v2[1] * v2[1]);
+    if (mag1 === 0 || mag2 === 0) return 0;
+    const cosAngle = dotProduct / (mag1 * mag2);
+    const clampedCos = Math.max(-1, Math.min(1, cosAngle)); // Clamp to [-1, 1]
+    return Math.acos(clampedCos) * (180 / Math.PI);
+  }
+
+  /**
+   * Checks if removing a node would cross a turn instruction threshold
+   * Used to detect intentional micro dog legs that control turn instructions
+   * Turn thresholds from WME-JAI: Keep/Turn boundary is 45.5°, U-Turn thresholds at 168.24°
+   * @param {number} angleWithNode - Turn angle at junction with the geometry node
+   * @param {number} angleWithoutNode - Turn angle at junction without the geometry node
+   * @returns {boolean} True if removal would cross a threshold (change turn instruction)
+   */
+  function checkMicroDogLegThreshold(angleWithNode, angleWithoutNode) {
+    const TURN_THRESHOLDS = [43.5, 45.5, 166.74, 168.24];
+    for (let threshold of TURN_THRESHOLDS) {
+      // Check if angles straddle the threshold (crossing it)
+      if ((angleWithNode < threshold && angleWithoutNode >= threshold) ||
+          (angleWithNode > threshold && angleWithoutNode <= threshold)) {
+        return true; // Crosses threshold - would change turn instruction
+      }
+    }
+    return false; // Safe to remove
+  }
+
 
   /**
    * Detects micro dog legs: geometry nodes within 2m of junction nodes
@@ -867,35 +903,45 @@
         endPointNodeObjs.splice(0, 1);
       }
 
-      // Calculate line equation coefficients (ax + by + c = 0)
+      // Create straightening line as a Turf LineString for Turf.js perpendicular projection
       // This line passes through both endpoint nodes and represents the straightening target
-      const a = endPointNode2Geo.coordinates[1] - endPointNode1Geo.coordinates[1],
-        b = endPointNode1Geo.coordinates[0] - endPointNode2Geo.coordinates[0],
-        c = endPointNode2Geo.coordinates[0] * endPointNode1Geo.coordinates[1] - endPointNode1Geo.coordinates[0] * endPointNode2Geo.coordinates[1];
+      const straighteningLine = turf.lineString([
+        endPointNode1Geo.coordinates,
+        endPointNode2Geo.coordinates
+      ]);
 
       // ════════════════════════════════════════════════════════════════════════════════
       // SECTION 6: CALCULATE NODE POSITIONS & DETECT LONG MOVES
       // For each junction node: calculate its perpendicular projection onto the straightening line
       // Also determines if any node would move >10m (triggers separate validation)
+      // Uses turf.nearestPointOnLine() to project each node onto the straightening line
       // ════════════════════════════════════════════════════════════════════════════════
 
       distinctNodes.forEach((nodeId) => {
         if (!endPointNodeIds.includes(nodeId)) {
           const node = wmeSdk.DataModel.Nodes.getById({ nodeId }),
             nodeGeo = structuredClone(node.geometry);
-          const d = nodeGeo.coordinates[1] * a - nodeGeo.coordinates[0] * b,
-            r1 = getIntersectCoord(a, b, c, d);
-          nodeGeo.coordinates[0] = r1.x;
-          nodeGeo.coordinates[1] = r1.y;
+
+          // Use Turf to calculate perpendicular projection of this node onto the straightening line
+          const nodePoint = turf.point(node.geometry.coordinates);
+          const projectedPoint = turf.nearestPointOnLine(straighteningLine, nodePoint);
+          const projectedCoords = projectedPoint.geometry.coordinates;
+
+          nodeGeo.coordinates[0] = projectedCoords[0];
+          nodeGeo.coordinates[1] = projectedCoords[1];
+
           const connectedSegObjs = {};
           const segmentIds = node.segmentIds || [];
           for (let idx = 0, { length } = segmentIds; idx < length; idx++) {
             const segId = segmentIds[idx];
             connectedSegObjs[segId] = structuredClone(wmeSdk.DataModel.Segments.getById({ segmentId: segId }).geometry);
           }
-          const fromNodeLonLat = { x: node.geometry.coordinates[0], y: node.geometry.coordinates[1] },
-            toNodeLonLat = r1;
-          if (distanceBetweenPoints(fromNodeLonLat.x, fromNodeLonLat.y, toNodeLonLat.x, toNodeLonLat.y, 'meters') > 10) longMove = true;
+
+          // Calculate distance node would move to check for long moves (>10m)
+          const originalCoords = node.geometry.coordinates;
+          const moveDistance = distanceBetweenPoints(originalCoords[0], originalCoords[1], projectedCoords[0], projectedCoords[1], 'meters');
+          if (moveDistance > 10) longMove = true;
+
           nodesToMoveArr.push({
             node,
             geometry: node.geometry,
@@ -989,6 +1035,198 @@
       // ════════════════════════════════════════════════════════════════════════════════
       logDebug('No segments selected or segments not found');
       logWarning(I18n.t('wmesu.log.NoSegmentsSelected'));
+    }
+  }
+
+  /**
+   * Simplifies selected segments using Ramer-Douglas-Peucker algorithm via Turf.js
+   * Preserves original path shape, detects intentional micro dog legs
+   * @param {boolean} microDogLegsContinue - If true, skip micro dog leg confirmation prompt
+   * @param {number} tolerance - Simplification tolerance in meters (default 1m)
+   */
+  function doSimplifySegments(microDogLegsContinue = false, tolerance = 1) {
+    log('doSimplifySegments called');
+    logDebug(`microDogLegsContinue=${microDogLegsContinue}, tolerance=${tolerance}m`);
+
+    try {
+      // Get selected segments
+      const selection = wmeSdk.Editing.getSelection();
+      if (!selection || selection.objectType !== 'segment' || !selection.ids || selection.ids.length === 0) {
+        logWarning(I18n.t('wmesu.log.NoSegmentsSelected'));
+        return;
+      }
+
+      const segmentIds = selection.ids;
+      logDebug(`Simplifying ${segmentIds.length} segment(s) with ${tolerance}m tolerance`);
+
+      const microDogLegViolations = []; // Store violations for user confirmation
+      const segmentsToUpdate = []; // Store segments with changes
+      let hasViolations = false;
+
+      // Convert tolerance from meters to degrees for Turf.simplify()
+      // Coordinates are in WGS84 (degrees), so we need to convert the tolerance
+      // At the equator, 1 meter ≈ 1/111111 degrees
+      // At higher latitudes, this varies, but we'll use equatorial approximation for simplicity
+      const toleranceDegrees = tolerance / 111111;
+
+      // Process each segment independently
+      for (let segIdx = 0; segIdx < segmentIds.length; segIdx++) {
+        const segmentId = segmentIds[segIdx];
+        const segment = wmeSdk.DataModel.Segments.getById({ segmentId });
+
+        if (!segment || !segment.geometry || !segment.geometry.coordinates) {
+          logDebug(`Skipping segment ${segmentId} - no geometry found`);
+          continue;
+        }
+
+        const coords = segment.geometry.coordinates;
+        if (coords.length < 3) {
+          logDebug(`Skipping segment ${segmentId} - only ${coords.length} coordinates`);
+          continue;
+        }
+
+        // Use turf.simplify() with Ramer-Douglas-Peucker algorithm
+        const lineString = turf.lineString(coords);
+        const simplified = turf.simplify(lineString, { tolerance: toleranceDegrees });
+        const newCoords = simplified.geometry.coordinates;
+
+        // If no change, skip
+        if (newCoords.length === coords.length) {
+          logDebug(`Segment ${segmentId}: no simplification needed`);
+          continue;
+        }
+
+        // Identify removed nodes
+        const nodesToRemove = [];
+        for (let i = 0; i < coords.length; i++) {
+          const coord = coords[i];
+          const found = newCoords.some((nc) => nc[0] === coord[0] && nc[1] === coord[1]);
+          if (!found) {
+            nodesToRemove.push(i);
+          }
+        }
+
+        // Get segment endpoint nodes for micro dog leg detection
+        const fromNode = segment.fromNode || segment.getFromNode?.();
+        const toNode = segment.toNode || segment.getToNode?.();
+
+        // Check for micro dog legs near junctions
+        for (let nodeIdx of nodesToRemove) {
+          const curCoord = coords[nodeIdx];
+          let isMicroDogLeg = false;
+
+          // Check distance to fromNode
+          if (fromNode && fromNode.geometry && distanceBetweenPoints(
+            curCoord[0], curCoord[1],
+            fromNode.geometry.coordinates[0], fromNode.geometry.coordinates[1],
+            'meters'
+          ) < 2) {
+            // Near fromNode - check if removal changes turn instruction
+            if (nodeIdx > 0 && nodeIdx < coords.length - 1) {
+              const angleWith = calculateAngle(coords[nodeIdx - 1], curCoord, coords[nodeIdx + 1]);
+              const angleWithout = calculateAngle(coords[nodeIdx - 1], coords[nodeIdx + 1], nodeIdx + 2 < coords.length ? coords[nodeIdx + 2] : coords[nodeIdx + 1]);
+              if (checkMicroDogLegThreshold(angleWith, angleWithout)) {
+                isMicroDogLeg = true;
+                hasViolations = true;
+                microDogLegViolations.push({
+                  segmentId,
+                  nodeIndex: nodeIdx,
+                  junctionType: 'fromNode',
+                  angleWith: angleWith.toFixed(1),
+                  angleWithout: angleWithout.toFixed(1),
+                });
+              }
+            }
+          }
+
+          // Check distance to toNode
+          if (!isMicroDogLeg && toNode && toNode.geometry && distanceBetweenPoints(
+            curCoord[0], curCoord[1],
+            toNode.geometry.coordinates[0], toNode.geometry.coordinates[1],
+            'meters'
+          ) < 2) {
+            // Near toNode - check if removal changes turn instruction
+            if (nodeIdx > 0 && nodeIdx < coords.length - 1) {
+              const angleWith = calculateAngle(nodeIdx - 2 >= 0 ? coords[nodeIdx - 2] : coords[nodeIdx - 1], curCoord, coords[nodeIdx + 1]);
+              const angleWithout = calculateAngle(nodeIdx - 2 >= 0 ? coords[nodeIdx - 2] : coords[nodeIdx - 1], coords[nodeIdx + 1], nodeIdx + 2 < coords.length ? coords[nodeIdx + 2] : coords[nodeIdx + 1]);
+              if (checkMicroDogLegThreshold(angleWith, angleWithout)) {
+                isMicroDogLeg = true;
+                hasViolations = true;
+                microDogLegViolations.push({
+                  segmentId,
+                  nodeIndex: nodeIdx,
+                  junctionType: 'toNode',
+                  angleWith: angleWith.toFixed(1),
+                  angleWithout: angleWithout.toFixed(1),
+                });
+              }
+            }
+          }
+        }
+
+        // Add to update list if not a micro dog leg violation or user confirmed
+        if (!hasViolations || microDogLegsContinue) {
+          segmentsToUpdate.push({
+            segmentId,
+            originalCoordCount: coords.length,
+            newCoords,
+            nodesToRemove,
+          });
+          logDebug(`Segment ${segmentId}: ${coords.length} → ${newCoords.length} nodes`);
+        }
+      }
+
+      // Handle micro dog leg violations
+      if (hasViolations && !microDogLegsContinue) {
+        logWarning(`Micro dog legs detected: ${microDogLegViolations.length} node(s) near junctions`);
+        WazeWrap.Alerts.confirm(
+          'WME Straighten Up! - Simplify',
+          `Warning: Removing ${microDogLegViolations.length} geometry node(s) would alter turn instructions at ${new Set(microDogLegViolations.map((v) => v.segmentId)).size} junction(s).\n\nThese appear to be intentional micro dog legs used to force turn instructions. Consider using Turn Instruction Override (TIO) or Voice Instruction Override (VIO) instead.\n\nRemove these nodes anyway?`,
+          () => {
+            logDebug('User confirmed micro dog leg removal');
+            doSimplifySegments(true, tolerance); // Recursive call with flag=true
+          },
+          () => {
+            logDebug('User cancelled micro dog leg removal');
+          }
+        );
+        return;
+      }
+
+      // Update segments
+      let successCount = 0;
+      for (let segUpdate of segmentsToUpdate) {
+        try {
+          logDebug(`Updating segment ${segUpdate.segmentId}: ${segUpdate.originalCoordCount} → ${segUpdate.newCoords.length} nodes`);
+
+          wmeSdk.DataModel.Segments.updateSegment({
+            segmentId: segUpdate.segmentId,
+            geometry: {
+              type: 'LineString',
+              coordinates: segUpdate.newCoords,
+            },
+          });
+
+          successCount++;
+        } catch (err) {
+          logError(`Failed to update segment ${segUpdate.segmentId}: ${err.message}`);
+        }
+      }
+
+      // Show result
+      if (successCount > 0) {
+        const totalNodesRemoved = segmentsToUpdate.reduce((sum, s) => sum + s.nodesToRemove.length, 0);
+        WazeWrap.Alerts.info(
+          'WME Straighten Up! - Simplify',
+          `Simplified ${successCount} segment(s): removed ${totalNodesRemoved} redundant node(s) with ${tolerance}m tolerance`
+        );
+        log(`Simplification complete: ${successCount} segments, ${totalNodesRemoved} nodes removed`);
+      } else {
+        WazeWrap.Alerts.info('WME Straighten Up! - Simplify', 'No redundant nodes found to remove');
+      }
+    } catch (err) {
+      logError(`doSimplifySegments error: ${err.message}`);
+      WazeWrap.Alerts.error('WME Straighten Up! - Simplify', `Error: ${err.message}`);
     }
   }
 
@@ -1349,32 +1587,53 @@
       },
 
       /**
-       * Creates the "Do It" button card for insertion into Segment Edit panel
-       * Uses same styling as sidebar version but wrapped for Segment Edit context
-       * @returns {HTMLElement} form-group element containing the button card
+       * Creates the "WME Straighten Up!" button for insertion into Segment Edit panel
+       * Simplified button without card header for better space utilization
+       * @returns {HTMLElement} form-group element containing the button
        */
       createSegmentEditButtonPanel = () => {
         const formGroup = document.createElement('div');
         formGroup.className = 'form-group wme-su-segment-edit-panel';
         formGroup.style.marginBottom = '12px';
 
-        // Reuse card styling from sidebar
+        // Card with title
         const buttonCard = makeCard('fa-arrows', 'WME Straighten Up!');
-        const buttonDiv = createElem('div', { style: 'padding: 10px;' });
-        buttonDiv.appendChild(
-          createElem(
-            'wz-button',
-            {
-              id: 'WME-SU-SEGMENT-EDIT',
-              color: 'primary',
-              size: 'md',
-              style: 'width: 100%;',
-              textContent: I18n.t('wmesu.common.DoIt'),
-            },
-            [{ click: doStraightenSegments }],
-          ),
+
+        // Buttons container (flex row for side-by-side layout)
+        const buttonsContainer = document.createElement('div');
+        buttonsContainer.style.display = 'flex';
+        buttonsContainer.style.gap = '8px';
+        buttonsContainer.style.padding = '10px';
+
+        // "Straighten" button styled as chip
+        const straightenBtn = createElem(
+          'wz-button',
+          {
+            id: 'WME-SU-SEGMENT-EDIT',
+            color: 'outline',
+            size: 'sm',
+            style: 'height: 26px;',
+            textContent: 'Straighten',
+          },
+          [{ click: doStraightenSegments }],
         );
-        buttonCard.body.appendChild(buttonDiv);
+        buttonsContainer.appendChild(straightenBtn);
+
+        // "Simplify" button styled as chip
+        const simplifyBtn = createElem(
+          'wz-button',
+          {
+            id: 'WME-SU-SIMPLIFY',
+            color: 'outline',
+            size: 'sm',
+            style: 'height: 28px;',
+            textContent: 'Simplify',
+          },
+          [{ click: () => doSimplifySegments() }],
+        );
+        buttonsContainer.appendChild(simplifyBtn);
+
+        buttonCard.body.appendChild(buttonsContainer);
         formGroup.appendChild(buttonCard.card);
 
         return formGroup;
