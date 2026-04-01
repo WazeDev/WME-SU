@@ -31,7 +31,7 @@
   const LOAD_BEGIN_TIME = performance.now();
 
   // ── Debug & execution state ──────────────────────────────────────────
-  let debug = true; // Set to false before release
+  let debug = false; // Set to false before release
   let wmeSdk; // WME SDK instance - assigned by bootstrap()
 
   // ── UI element cache ─────────────────────────────────────────────────
@@ -70,10 +70,8 @@
    * @returns {Object[]} Array of segment objects from SDK
    */
   function getSegmentsByIds(segmentIds) {
-    logDebug(`getSegmentsByIds called with IDs: ${segmentIds}`);
     const segments = segmentIds.map((segmentId) => {
       const seg = wmeSdk.DataModel.Segments.getById({ segmentId });
-      logDebug(`SDK returned for segment ${segmentId}:`, seg);
       return seg;
     });
     return segments;
@@ -423,7 +421,7 @@
   function saveSettingsToStorage() {
     checkTimeout({ timeout: 'saveSettingsToStorage' });
     if (localStorage) {
-      // Query SDK for current shortcut value (in case user changed it) 
+      // Query SDK for current shortcut value (in case user changed it)
       if (wmeSdk && wmeSdk.Shortcuts && wmeSdk.Shortcuts.getAllShortcuts) {
         try {
           const allShortcuts = wmeSdk.Shortcuts.getAllShortcuts();
@@ -560,39 +558,6 @@
    * @param {number[]} point3 - Third point [lon, lat]
    * @returns {number} Angle in degrees (0-180)
    */
-  function calculateAngle(point1, point2, point3) {
-    const v1 = [point1[0] - point2[0], point1[1] - point2[1]];
-    const v2 = [point3[0] - point2[0], point3[1] - point2[1]];
-    const dotProduct = v1[0] * v2[0] + v1[1] * v2[1];
-    const mag1 = Math.sqrt(v1[0] * v1[0] + v1[1] * v1[1]);
-    const mag2 = Math.sqrt(v2[0] * v2[0] + v2[1] * v2[1]);
-    if (mag1 === 0 || mag2 === 0) return 0;
-    const cosAngle = dotProduct / (mag1 * mag2);
-    const clampedCos = Math.max(-1, Math.min(1, cosAngle)); // Clamp to [-1, 1]
-    return Math.acos(clampedCos) * (180 / Math.PI);
-  }
-
-  /**
-   * Checks if removing a node would cross a turn instruction threshold
-   * Used to detect intentional micro dog legs that control turn instructions
-   * Turn thresholds from WME-JAI: Keep/Turn boundary is 45.5°, U-Turn thresholds at 168.24°
-   * @param {number} angleWithNode - Turn angle at junction with the geometry node
-   * @param {number} angleWithoutNode - Turn angle at junction without the geometry node
-   * @returns {boolean} True if removal would cross a threshold (change turn instruction)
-   */
-  function checkMicroDogLegThreshold(angleWithNode, angleWithoutNode) {
-    const TURN_THRESHOLDS = [43.5, 45.5, 166.74, 168.24];
-    for (let threshold of TURN_THRESHOLDS) {
-      // Check if angles straddle the threshold (crossing it)
-      if ((angleWithNode < threshold && angleWithoutNode >= threshold) ||
-          (angleWithNode > threshold && angleWithoutNode <= threshold)) {
-        return true; // Crosses threshold - would change turn instruction
-      }
-    }
-    return false; // Safe to remove
-  }
-
-
   /**
    * Detects micro dog legs: geometry nodes within 2m of junction nodes
    * Indicates possible mapping issues that should be fixed before straightening
@@ -600,36 +565,39 @@
    * @param {number} singleSegmentId - Optional: only check this segment
    * @returns {boolean} True if micro dog legs detected
    */
-  function checkForMicroDogLegs(distinctNodes, singleSegmentId) {
-    if (!distinctNodes || distinctNodes.length < 1) return false;
-    const nodesChecked = [],
-      nodesObjArr = getNodesByIds(distinctNodes); // Use SDK helper
-    if (!nodesObjArr || nodesObjArr.length < 1) return false;
-    const checkGeoComp = function (geoComp) {
-      const testNode4326 = { lon: geoComp[0], lat: geoComp[1] };
-      if (this.lon !== testNode4326.lon || this.lat !== testNode4326.lat) {
-        if (distanceBetweenPoints(this.lon, this.lat, testNode4326.lon, testNode4326.lat, 'meters') < 2) return false;
-      }
-      return true;
-    };
-    for (let idx = 0, { length } = nodesObjArr; idx < length; idx++) {
-      if (!nodesChecked.includes(nodesObjArr[idx])) {
-        nodesChecked.push(nodesObjArr[idx]);
-        // Get segment IDs from node and fetch segment objects (SDK uses properties, not methods)
-        const segmentIds = nodesObjArr[idx].segmentIds || [];
-        const segmentsObjArr = getSegmentsByIds(segmentIds) || [],
-          node4326 = {
-            lon: nodesObjArr[idx].geometry.coordinates[0],
-            lat: nodesObjArr[idx].geometry.coordinates[1],
-          };
-        for (let idx2 = 0, len = segmentsObjArr.length; idx2 < len; idx2++) {
-          const segObj = segmentsObjArr[idx2];
-          if (!singleSegmentId || (singleSegmentId && segObj.id === singleSegmentId)) {
-            if (!segObj.geometry.coordinates.every(checkGeoComp.bind(node4326))) return true;
-          }
+  /**
+   * Checks if any geometry nodes are within 2m of segment junction nodes
+   * Used by both single-segment and multi-segment straightening paths
+   * @param {Object[]} segments - Array of segment objects to check
+   * @returns {boolean} True if any geometry node is < 2m from a junction
+   */
+  function checkSegmentsForMicroDogLegs(segments) {
+    if (!segments || segments.length === 0) return false;
+
+    for (let segIdx = 0; segIdx < segments.length; segIdx++) {
+      const seg = segments[segIdx];
+      if (!seg || !seg.geometry || !seg.geometry.coordinates) continue;
+
+      const coords = seg.geometry.coordinates;
+      if (coords.length < 3) continue; // Need at least 3 nodes to have geometry nodes
+
+      const fromNodeCoord = coords[0];
+      const toNodeCoord = coords[coords.length - 1];
+
+      // Check each geometry node (skip first and last which are endpoints)
+      for (let i = 1; i < coords.length - 1; i++) {
+        const coord = coords[i];
+        const distToFromNode = distanceBetweenPoints(coord[0], coord[1], fromNodeCoord[0], fromNodeCoord[1], 'meters');
+        const distToToNode = distanceBetweenPoints(coord[0], coord[1], toNodeCoord[0], toNodeCoord[1], 'meters');
+        const minDist = Math.min(distToFromNode, distToToNode);
+
+        if (minDist < 2) {
+          logDebug(`Micro dog leg: Segment ${seg.id}, node ${i} is ${minDist.toFixed(2)}m from junction`);
+          return true;
         }
       }
     }
+
     return false;
   }
 
@@ -647,21 +615,17 @@
    */
   function doStraightenSegments(sanityContinue, nonContinuousContinue, conflictingNamesContinue, microDogLegsContinue, longJnMoveContinue, passedObj) {
     log('doStraightenSegments called');
-    logDebug(`Parameters: sanityContinue=${sanityContinue}, longJnMoveContinue=${longJnMoveContinue}, passedObj=${passedObj ? 'yes' : 'no'}`);
 
     // ════════════════════════════════════════════════════════════════════════════════
     // SECTION 1: RETRIEVE SELECTION
     // Gets the currently selected segments from the WME editor
     // ════════════════════════════════════════════════════════════════════════════════
     const selection = wmeSdk.Editing.getSelection();
-    logDebug(`Selection: ${selection ? `objectType=${selection.objectType}, ids=${selection.ids?.length || 0}` : 'null'}`);
-
     const segments = selection && selection.objectType === 'segment' && selection.ids ? getSegmentsByIds(selection.ids) : [];
     const segmentSelection = {
       segments: segments,
       multipleConnectedComponents: hasMultipleConnectedComponents(segments),
     };
-    logDebug(`Segment selection: ${segmentSelection.segments.length} segments found, multipleConnectedComponents=${segmentSelection.multipleConnectedComponents}`);
 
     // ════════════════════════════════════════════════════════════════════════════════
     // SECTION 2: EXECUTE STRAIGHTENING (if all validations passed)
@@ -684,23 +648,17 @@
               segmentId: obj.segment.id,
               geometry: obj.newGeo,
             });
-            logDebug(`${I18n.t('wmesu.log.RemovedGeometryNodes')} # ${obj.segment.id}`);
+            logDebug(`Removed geometry from segment ${obj.segment.id}: ${obj.segment.geometry.coordinates.length} → ${obj.newGeo.coordinates.length} nodes`);
           } catch (err) {
             logError(`Failed to update segment ${obj.segment.id}:`, err);
           }
         });
       }
       if (nodesToMoveArr?.length > 0) {
-        logDebug(`Moving ${nodesToMoveArr.length} node(s)`);
         // Use SDK method to move nodes
         let straightened = false;
         nodesToMoveArr.forEach((node) => {
           if (Math.abs(node.geometry.coordinates[0] - node.nodeGeo.coordinates[0]) > 0.00000001 || Math.abs(node.geometry.coordinates[1] - node.nodeGeo.coordinates[1]) > 0.00000001) {
-            logDebug(
-              `${I18n.t('wmesu.log.MovingJunctionNode')} # ${node.node.id} ` +
-                `- ${I18n.t('wmesu.common.From')}: ${node.geometry.coordinates[0]},${node.geometry.coordinates[1]} - ` +
-                `${I18n.t('wmesu.common.To')}: ${node.nodeGeo.coordinates[0]},${node.nodeGeo.coordinates[1]}`,
-            );
             try {
               wmeSdk.DataModel.Nodes.moveNode({
                 id: node.node.id,
@@ -848,11 +806,11 @@
 
       // ────────────────────────────────────────────────────────────────────────────────
       // VALIDATION CHECK 4: MICRO DOG LEGS
-      // Detects if any junction nodes have geometry nodes within 2m (potential mapping issues)
+      // Detects if any geometry nodes are within 2m of segment endpoints (potential mapping issues)
       // Straightening with micro dog legs could make the issues worse
       // Flag: microDogLegsContinue - stays true once confirmed
       // ────────────────────────────────────────────────────────────────────────────────
-      if (!microDogLegsContinue && checkForMicroDogLegs(distinctNodes, undefined) === true) {
+      if (!microDogLegsContinue && checkSegmentsForMicroDogLegs(segmentSelection.segments) === true) {
         if (settings.microDogLegs === 'error') {
           WazeWrap.Alerts.error(GM_info.script.name, I18n.t('wmesu.error.MicroDogLegs'));
           return;
@@ -992,14 +950,13 @@
       // For a single segment: only removes geometry nodes (no junction node movement needed)
       // Still performs micro dog leg check before proceeding
       // ════════════════════════════════════════════════════════════════════════════════
-      logDebug('Processing single segment');
       const seg = segmentSelection.segments[0];
-      logDebug(`Segment ID: ${seg.id}`);
 
       // ────────────────────────────────────────────────────────────────────────────────
       // VALIDATION CHECK 4B: MICRO DOG LEGS (single segment variant)
+      // Check if any geometry node is within 2m of a segment endpoint
       // ────────────────────────────────────────────────────────────────────────────────
-      if (!microDogLegsContinue && checkForMicroDogLegs([seg.fromNodeId, seg.toNodeId], seg.id) === true) {
+      if (!microDogLegsContinue && checkSegmentsForMicroDogLegs([seg]) === true) {
         if (settings.microDogLegs === 'error') {
           WazeWrap.Alerts.error(GM_info.script.name, I18n.t('wmesu.error.MicroDogLegs'));
           return;
@@ -1022,12 +979,14 @@
       const newGeo = structuredClone(seg.geometry);
       // Remove the geometry nodes using SDK method
       if (newGeo.coordinates.length > 2) {
+        const beforeCount = seg.geometry.coordinates.length;
         newGeo.coordinates.splice(1, newGeo.coordinates.length - 2);
+
         wmeSdk.DataModel.Segments.updateSegment({
           segmentId: seg.id,
           geometry: newGeo,
         });
-        logDebug(`${I18n.t('wmesu.log.RemovedGeometryNodes')} # ${seg.id}`);
+        logDebug(`Straightened segment ${seg.id}: ${beforeCount} → ${newGeo.coordinates.length} nodes`);
       }
     } else {
       // ════════════════════════════════════════════════════════════════════════════════
@@ -1042,12 +1001,12 @@
   /**
    * Simplifies selected segments using Ramer-Douglas-Peucker algorithm via Turf.js
    * Preserves original path shape, detects intentional micro dog legs
+   * @param {boolean} sanityContinue - If true, skip sanity check confirmation prompt
    * @param {boolean} microDogLegsContinue - If true, skip micro dog leg confirmation prompt
    * @param {number} tolerance - Simplification tolerance in meters (default 1m)
    */
-  function doSimplifySegments(microDogLegsContinue = false, tolerance = 1) {
+  function doSimplifySegments(sanityContinue = false, microDogLegsContinue = false, tolerance = 1) {
     log('doSimplifySegments called');
-    logDebug(`microDogLegsContinue=${microDogLegsContinue}, tolerance=${tolerance}m`);
 
     try {
       // Get selected segments
@@ -1058,11 +1017,62 @@
       }
 
       const segmentIds = selection.ids;
-      logDebug(`Simplifying ${segmentIds.length} segment(s) with ${tolerance}m tolerance`);
 
-      const microDogLegViolations = []; // Store violations for user confirmation
+      // ────────────────────────────────────────────────────────────────────────────────
+      // VALIDATION CHECK 1: SANITY CHECK (>10 segments)
+      // Prevents accidental mass edits by requiring confirmation for large selections
+      // ────────────────────────────────────────────────────────────────────────────────
+      if (segmentIds.length > 10 && !sanityContinue) {
+        logDebug('Sanity check: more than 10 segments');
+        if (settings.sanityCheck === 'error') {
+          WazeWrap.Alerts.error(GM_info.script.name, I18n.t('wmesu.error.TooManySegments'));
+          return;
+        }
+        if (settings.sanityCheck === 'warning') {
+          WazeWrap.Alerts.confirm(
+            GM_info.script.name,
+            I18n.t('wmesu.prompts.SanityCheckConfirm'),
+            () => {
+              doSimplifySegments(true, false, tolerance); // Recursive call with sanityContinue=true
+            },
+            () => {},
+            I18n.t('wmesu.common.Yes'),
+            I18n.t('wmesu.common.No'),
+          );
+          return;
+        }
+      }
+      sanityContinue = true;
+
+      // ────────────────────────────────────────────────────────────────────────────────
+      // VALIDATION CHECK 2: MICRO DOG LEGS (before simplification)
+      // Check ALL geometry nodes for micro dog legs BEFORE running RDP
+      // This catches intentional micro dog legs that might be removed by simplification
+      // ────────────────────────────────────────────────────────────────────────────────
+      const segmentsToCheck = getSegmentsByIds(segmentIds);
+      if (!microDogLegsContinue && checkSegmentsForMicroDogLegs(segmentsToCheck) === true) {
+        logDebug('Micro dog legs detected in selected segments');
+        if (settings.microDogLegs === 'error') {
+          WazeWrap.Alerts.error(GM_info.script.name, 'Geometry nodes within 2m of junctions detected (possible micro dog legs). Simplification blocked by settings.');
+          return;
+        }
+        if (settings.microDogLegs === 'warning') {
+          WazeWrap.Alerts.confirm(
+            GM_info.script.name,
+            'Geometry nodes detected within 2m of junctions (possible micro dog legs). Continue simplifying anyway?',
+            () => {
+              doSimplifySegments(sanityContinue, true, tolerance); // Recursive call with microDogLegsContinue=true
+            },
+            () => {},
+            I18n.t('wmesu.common.Yes'),
+            I18n.t('wmesu.common.No'),
+          );
+          return;
+        }
+      }
+      microDogLegsContinue = true;
+
       const segmentsToUpdate = []; // Store segments with changes
-      let hasViolations = false;
 
       // Convert tolerance from meters to degrees for Turf.simplify()
       // Coordinates are in WGS84 (degrees), so we need to convert the tolerance
@@ -1075,16 +1085,10 @@
         const segmentId = segmentIds[segIdx];
         const segment = wmeSdk.DataModel.Segments.getById({ segmentId });
 
-        if (!segment || !segment.geometry || !segment.geometry.coordinates) {
-          logDebug(`Skipping segment ${segmentId} - no geometry found`);
-          continue;
-        }
+        if (!segment || !segment.geometry || !segment.geometry.coordinates) continue;
 
         const coords = segment.geometry.coordinates;
-        if (coords.length < 3) {
-          logDebug(`Skipping segment ${segmentId} - only ${coords.length} coordinates`);
-          continue;
-        }
+        if (coords.length < 3) continue;
 
         // Use turf.simplify() with Ramer-Douglas-Peucker algorithm
         const lineString = turf.lineString(coords);
@@ -1092,114 +1096,29 @@
         const newCoords = simplified.geometry.coordinates;
 
         // If no change, skip
-        if (newCoords.length === coords.length) {
-          logDebug(`Segment ${segmentId}: no simplification needed`);
-          continue;
-        }
+        if (newCoords.length === coords.length) continue;
 
         // Identify removed nodes
         const nodesToRemove = [];
         for (let i = 0; i < coords.length; i++) {
           const coord = coords[i];
           const found = newCoords.some((nc) => nc[0] === coord[0] && nc[1] === coord[1]);
-          if (!found) {
-            nodesToRemove.push(i);
-          }
+          if (!found) nodesToRemove.push(i);
         }
 
-        // Get segment endpoint nodes for micro dog leg detection
-        const fromNode = segment.fromNode || segment.getFromNode?.();
-        const toNode = segment.toNode || segment.getToNode?.();
-
-        // Check for micro dog legs near junctions
-        for (let nodeIdx of nodesToRemove) {
-          const curCoord = coords[nodeIdx];
-          let isMicroDogLeg = false;
-
-          // Check distance to fromNode
-          if (fromNode && fromNode.geometry && distanceBetweenPoints(
-            curCoord[0], curCoord[1],
-            fromNode.geometry.coordinates[0], fromNode.geometry.coordinates[1],
-            'meters'
-          ) < 2) {
-            // Near fromNode - check if removal changes turn instruction
-            if (nodeIdx > 0 && nodeIdx < coords.length - 1) {
-              const angleWith = calculateAngle(coords[nodeIdx - 1], curCoord, coords[nodeIdx + 1]);
-              const angleWithout = calculateAngle(coords[nodeIdx - 1], coords[nodeIdx + 1], nodeIdx + 2 < coords.length ? coords[nodeIdx + 2] : coords[nodeIdx + 1]);
-              if (checkMicroDogLegThreshold(angleWith, angleWithout)) {
-                isMicroDogLeg = true;
-                hasViolations = true;
-                microDogLegViolations.push({
-                  segmentId,
-                  nodeIndex: nodeIdx,
-                  junctionType: 'fromNode',
-                  angleWith: angleWith.toFixed(1),
-                  angleWithout: angleWithout.toFixed(1),
-                });
-              }
-            }
-          }
-
-          // Check distance to toNode
-          if (!isMicroDogLeg && toNode && toNode.geometry && distanceBetweenPoints(
-            curCoord[0], curCoord[1],
-            toNode.geometry.coordinates[0], toNode.geometry.coordinates[1],
-            'meters'
-          ) < 2) {
-            // Near toNode - check if removal changes turn instruction
-            if (nodeIdx > 0 && nodeIdx < coords.length - 1) {
-              const angleWith = calculateAngle(nodeIdx - 2 >= 0 ? coords[nodeIdx - 2] : coords[nodeIdx - 1], curCoord, coords[nodeIdx + 1]);
-              const angleWithout = calculateAngle(nodeIdx - 2 >= 0 ? coords[nodeIdx - 2] : coords[nodeIdx - 1], coords[nodeIdx + 1], nodeIdx + 2 < coords.length ? coords[nodeIdx + 2] : coords[nodeIdx + 1]);
-              if (checkMicroDogLegThreshold(angleWith, angleWithout)) {
-                isMicroDogLeg = true;
-                hasViolations = true;
-                microDogLegViolations.push({
-                  segmentId,
-                  nodeIndex: nodeIdx,
-                  junctionType: 'toNode',
-                  angleWith: angleWith.toFixed(1),
-                  angleWithout: angleWithout.toFixed(1),
-                });
-              }
-            }
-          }
-        }
-
-        // Add to update list if not a micro dog leg violation or user confirmed
-        if (!hasViolations || microDogLegsContinue) {
-          segmentsToUpdate.push({
-            segmentId,
-            originalCoordCount: coords.length,
-            newCoords,
-            nodesToRemove,
-          });
-          logDebug(`Segment ${segmentId}: ${coords.length} → ${newCoords.length} nodes`);
-        }
+        // Add to update list (micro dog legs already validated before RDP)
+        segmentsToUpdate.push({
+          segmentId,
+          originalCoordCount: coords.length,
+          newCoords,
+          nodesToRemove,
+        });
       }
 
-      // Handle micro dog leg violations
-      if (hasViolations && !microDogLegsContinue) {
-        logWarning(`Micro dog legs detected: ${microDogLegViolations.length} node(s) near junctions`);
-        WazeWrap.Alerts.confirm(
-          'WME Straighten Up! - Simplify',
-          `Warning: Removing ${microDogLegViolations.length} geometry node(s) would alter turn instructions at ${new Set(microDogLegViolations.map((v) => v.segmentId)).size} junction(s).\n\nThese appear to be intentional micro dog legs used to force turn instructions. Consider using Turn Instruction Override (TIO) or Voice Instruction Override (VIO) instead.\n\nRemove these nodes anyway?`,
-          () => {
-            logDebug('User confirmed micro dog leg removal');
-            doSimplifySegments(true, tolerance); // Recursive call with flag=true
-          },
-          () => {
-            logDebug('User cancelled micro dog leg removal');
-          }
-        );
-        return;
-      }
-
-      // Update segments
+      // Update segments (micro dog legs already validated before processing)
       let successCount = 0;
       for (let segUpdate of segmentsToUpdate) {
         try {
-          logDebug(`Updating segment ${segUpdate.segmentId}: ${segUpdate.originalCoordCount} → ${segUpdate.newCoords.length} nodes`);
-
           wmeSdk.DataModel.Segments.updateSegment({
             segmentId: segUpdate.segmentId,
             geometry: {
@@ -1207,10 +1126,9 @@
               coordinates: segUpdate.newCoords,
             },
           });
-
           successCount++;
         } catch (err) {
-          logError(`Failed to update segment ${segUpdate.segmentId}: ${err.message}`);
+          logError(`Failed to simplify segment ${segUpdate.segmentId}: ${err.message}`);
         }
       }
 
@@ -1323,8 +1241,7 @@
                 'One or more of the junction nodes that were to be moved would have been moved further than 10m and you have the long junction node move setting set to ' +
                 'give error. Segments not straightened.',
               MicroDogLegs:
-                'One or more of the junctions nodes in the selection have a geonode within 2 meters. This is usually the sign of a micro dog leg (mDL).<br><br>' +
-                'You have the setting for possibe micro doglegs set to give error. Segments not straightened.',
+                'Geometry nodes within 2m of junctions detected (possible micro dog legs). Straightening blocked by settings.',
               NonContinuous: 'You selected segments that are not all connected and have the non-continuous selected segments setting set to give error. Segments not straightened.',
               TooManySegments: 'You selected too many segments and have the sanity check setting set to give error. Segments not straightened.',
             },
@@ -1349,10 +1266,7 @@
               ConflictingNamesConfirm: 'You selected segments that do not share at least one name in common amongst all the segments. Are you sure you wish to continue straightening?',
               LongJnMoveConfirm: 'One or more of the junction nodes that are to be moved would be moved further than 10m. Are you sure you wish to continue straightening?',
               MicroDogLegsConfirm:
-                'One or more of the junction nodes in the selection have a geonode within 2 meters. This is usually the sign of a micro dog leg (mDL).<br>' +
-                'This geonode could exist on any segment connected to the junction nodes, not just the segments you selected.<br><br>' +
-                '<b>You should not continue until you are certain there are no micro dog legs.<b><br><br>' +
-                'Are you sure you wish to continue straightening?',
+                'Geometry nodes detected within 2m of junctions (possible micro dog legs). Continue straightening anyway?',
               NonContinuousConfirm: 'You selected segments that do not all connect. Are you sure you wish to continue straightening?',
               SanityCheckConfirm: 'You selected many segments. Are you sure you wish to continue straightening?',
             },
@@ -1630,7 +1544,7 @@
             style: 'height: 28px;',
             textContent: 'Simplify',
           },
-          [{ click: () => doSimplifySegments(false, settings.simplifyTolerance) }],
+          [{ click: () => doSimplifySegments(false, false, settings.simplifyTolerance) }],
         );
         buttonsContainer.appendChild(simplifyBtn);
 
@@ -1674,12 +1588,6 @@
           '.wme-su-panel .su-info-icon:hover { opacity: 1; }',
           '.wme-su-panel .su-info-icon::before { content: "ⓘ"; }',
           '.wme-su-panel .su-info-icon:hover::after { content: attr(data-tooltip); display: block; position: absolute; bottom: 100%; left: -60px; right: auto; background: #1a1a1a; color: #fff; padding: 6px 8px; border-radius: 4px; font-size: 9px; white-space: normal; width: 130px; z-index: 10000; line-height: 1.3; box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-weight: 400; margin-bottom: 4px; }',
-          '.wme-su-panel wz-button[color="outline"] { background-color: #d3d3d3 !important; color: #333 !important; border: none !important; }',
-          '.wme-su-panel wz-button[color="outline"]:hover { background-color: #b0b0b0 !important; }',
-          '.wme-su-panel wz-button[color="primary"] { background-color: #0066cc !important; color: #fff !important; }',
-          '[wz-theme="dark"] .wme-su-panel wz-button[color="outline"] { background-color: #555 !important; color: #ddd !important; }',
-          '[wz-theme="dark"] .wme-su-panel wz-button[color="outline"]:hover { background-color: #666 !important; }',
-          '[wz-theme="dark"] .wme-su-panel wz-button[color="primary"] { background-color: #0066cc !important; color: #fff !important; }',
           '[wz-theme="dark"] .wme-su-panel .su-header { background: linear-gradient(135deg, #0052a3, #003d7a); }',
           '[wz-theme="dark"] .wme-su-panel .su-card-header { background: linear-gradient(135deg, #2a2c30, #202124); color: #e8eaed; }',
           '[wz-theme="dark"] .wme-su-panel .su-card-header:hover { background: linear-gradient(135deg, #333538, #2a2c30); }',
@@ -1775,7 +1683,7 @@
         toleranceLabel.style.flexShrink = 0;
         toleranceLabel.style.marginRight = '2px';
 
-        const toleranceChips = document.createElement('div');
+        const toleranceChips = document.createElement('wz-chip-select');
         toleranceChips.style.display = 'flex';
         toleranceChips.style.gap = '2px';
         toleranceChips.style.flexWrap = 'nowrap';
@@ -1785,42 +1693,61 @@
           { value: 1, label: '1m' },
           { value: 3, label: '3m' },
           { value: 5, label: '5m' },
-          { value: 10, label: '10' },
+          { value: 10, label: '10m' },
         ];
 
-        // Store button refs for toggling selected state
-        const toleranceButtons = {};
+        // Store chip refs and observers for toggling selected state
+        const toleranceChips_els = {};
+        const toleranceObservers = {};
 
         toleranceOptions.forEach((opt) => {
           const isSelected = settings.simplifyTolerance === opt.value;
-          const btn = createElem(
-            'wz-button',
-            {
-              id: `WMESU-toleranceBtn-${opt.value}`,
-              color: isSelected ? 'primary' : 'outline',
-              size: 'xs',
-              textContent: opt.label,
-              style: 'padding: 1px 4px; font-size: 9px; min-width: 28px;',
-            },
-            [
-              {
-                click: () => {
-                  // Update all buttons: selected = primary, others = outline
+          const chip = document.createElement('wz-checkable-chip');
+          chip.id = `WMESU-toleranceChip-${opt.value}`;
+          chip.value = opt.value.toString();
+          chip.size = 'md';
+          if (isSelected) chip.setAttribute('checked', '');
+          chip.textContent = opt.label;
+
+          // Use MutationObserver to detect when chip becomes checked
+          const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+              if (mutation.attributeName === 'checked') {
+                if (chip.hasAttribute('checked')) {
+                  // Temporarily disconnect all observers to avoid infinite loop
                   toleranceOptions.forEach((o) => {
-                    const btn = toleranceButtons[o.value];
-                    if (btn) {
-                      btn.color = o.value === opt.value ? 'primary' : 'outline';
+                    toleranceObservers[o.value]?.disconnect();
+                  });
+
+                  // Update all chips: uncheck others, keep this one checked
+                  toleranceOptions.forEach((o) => {
+                    const c = toleranceChips_els[o.value];
+                    if (c) {
+                      if (o.value === opt.value) {
+                        c.setAttribute('checked', '');
+                      } else {
+                        c.removeAttribute('checked');
+                      }
                     }
                   });
+
+                  // Reconnect all observers
+                  toleranceOptions.forEach((o) => {
+                    toleranceObservers[o.value]?.observe(toleranceChips_els[o.value], { attributes: true, attributeFilter: ['checked'] });
+                  });
+
                   settings.simplifyTolerance = opt.value;
-                  saveSettingsToStorage();
                   logDebug(`Simplify tolerance changed to ${opt.value}m`);
-                },
-              },
-            ],
-          );
-          toleranceButtons[opt.value] = btn;
-          toleranceChips.appendChild(btn);
+                  window.setTimeout(() => saveSettingsToStorage(), 100);
+                }
+              }
+            });
+          });
+
+          toleranceChips_els[opt.value] = chip;
+          toleranceObservers[opt.value] = observer;
+          observer.observe(chip, { attributes: true, attributeFilter: ['checked'] });
+          toleranceChips.appendChild(chip);
         });
 
         toleranceRow.appendChild(toleranceLabel);
