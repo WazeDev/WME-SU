@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        WME Straighten Up!
 // @namespace   https://greasyfork.org/users/166843
-// @version     2026.03.31.00
+// @version     2026.03.31.01
 // @description Straighten selected WME segment(s) by aligning along straight line between two end points and removing geometry nodes.
 // @author      JS55CT
 // @match       http*://*.waze.com/*editor*
@@ -23,7 +23,9 @@
 
   // ── Script metadata ──────────────────────────────────────────────────
   const SHOW_UPDATE_MESSAGE = true;
-  const SCRIPT_VERSION_CHANGES = ['BUGFIX: Check for micro dog leg (mDL)'];
+
+  const SCRIPT_VERSION_CHANGES = ['MAJOR UPDATE: NEW SDK VERSION', 'NEW Simplify option added'];
+
   const SCRIPT_VERSION = GM_info.script.version.toString();
   const DOWNLOAD_URL = 'https://greasyfork.org/scripts/388349-wme-straighten-up/code/WME%20Straighten%20Up!.user.js';
   const SCRIPT_PAGE_URL = 'https://greasyfork.org/scripts/388349-wme-straighten-up/';
@@ -92,7 +94,7 @@
       // Build a map of node IDs to segments that use that node
       const nodeToSegments = {};
 
-      segments.forEach(seg => {
+      segments.forEach((seg) => {
         if (!seg?.fromNodeId || !seg?.toNodeId) {
           logWarning(`Segment ${seg?.id} missing node IDs, skipping connectivity check`);
           return;
@@ -127,14 +129,14 @@
           componentMap.set(segId, component);
 
           // Find the actual segment object
-          const seg = segments.find(s => s.id === segId);
+          const seg = segments.find((s) => s.id === segId);
           if (!seg) continue;
 
           // Find other segments connected through this segment's nodes
           const connectedNodeIds = [seg.fromNodeId, seg.toNodeId];
-          connectedNodeIds.forEach(nodeId => {
+          connectedNodeIds.forEach((nodeId) => {
             if (nodeToSegments[nodeId]) {
-              nodeToSegments[nodeId].forEach(connectedSegId => {
+              nodeToSegments[nodeId].forEach((connectedSegId) => {
                 if (!visited.has(connectedSegId)) {
                   queue.push(connectedSegId);
                 }
@@ -536,14 +538,14 @@
 
     // Map measurement names to Turf units (turf uses 'meters', 'miles', 'feet', etc.)
     const unitMap = {
-      'meters': 'meters',
-      'miles': 'miles',
-      'feet': 'feet',
-      'kilometers': 'kilometers',
-      'nm': 'nauticalmiles',
+      meters: 'meters',
+      miles: 'miles',
+      feet: 'feet',
+      kilometers: 'kilometers',
+      nm: 'nauticalmiles',
       'nautical miles': 'nauticalmiles',
-      'degrees': 'degrees',
-      'radians': 'radians'
+      degrees: 'degrees',
+      radians: 'radians',
     };
 
     const turfUnit = unitMap[measurement] || 'kilometers';
@@ -682,8 +684,8 @@
       logDebug(`Processing ${segmentSelection.segments.length} segments`);
 
       // Arrays to collect segments and nodes that need updating
-      const segmentsToRemoveGeometryArr = [],  // Segments needing geometry node removal
-        nodesToMoveArr = [];                   // Junction nodes that need repositioning
+      const segmentsToRemoveGeometryArr = [], // Segments needing geometry node removal
+        nodesToMoveArr = []; // Junction nodes that need repositioning
 
       // ────────────────────────────────────────────────────────────────────────────────
       // VALIDATION CHECK 1: SANITY CHECK
@@ -864,10 +866,7 @@
 
       // Create straightening line as a Turf LineString for Turf.js perpendicular projection
       // This line passes through both endpoint nodes and represents the straightening target
-      const straighteningLine = turf.lineString([
-        endPointNode1Geo.coordinates,
-        endPointNode2Geo.coordinates
-      ]);
+      const straighteningLine = turf.lineString([endPointNode1Geo.coordinates, endPointNode2Geo.coordinates]);
 
       // ════════════════════════════════════════════════════════════════════════════════
       // SECTION 6: CALCULATE NODE POSITIONS & DETECT LONG MOVES
@@ -1135,10 +1134,7 @@
       // Show result
       if (successCount > 0) {
         const totalNodesRemoved = segmentsToUpdate.reduce((sum, s) => sum + s.nodesToRemove.length, 0);
-        WazeWrap.Alerts.info(
-          'WME Straighten Up! - Simplify',
-          `Simplified ${successCount} segment(s): removed ${totalNodesRemoved} redundant node(s) with ${tolerance}m tolerance`
-        );
+        WazeWrap.Alerts.info('WME Straighten Up! - Simplify', `Simplified ${successCount} segment(s): removed ${totalNodesRemoved} redundant node(s) with ${tolerance}m tolerance`);
         log(`Simplification complete: ${successCount} segments, ${totalNodesRemoved} nodes removed`);
       } else {
         WazeWrap.Alerts.info('WME Straighten Up! - Simplify', 'No redundant nodes found to remove');
@@ -1240,8 +1236,7 @@
               LongJnMove:
                 'One or more of the junction nodes that were to be moved would have been moved further than 10m and you have the long junction node move setting set to ' +
                 'give error. Segments not straightened.',
-              MicroDogLegs:
-                'Geometry nodes within 2m of junctions detected (possible micro dog legs). Straightening blocked by settings.',
+              MicroDogLegs: 'Geometry nodes within 2m of junctions detected (possible micro dog legs). Straightening blocked by settings.',
               NonContinuous: 'You selected segments that are not all connected and have the non-continuous selected segments setting set to give error. Segments not straightened.',
               TooManySegments: 'You selected too many segments and have the sanity check setting set to give error. Segments not straightened.',
             },
@@ -1265,8 +1260,7 @@
             prompts: {
               ConflictingNamesConfirm: 'You selected segments that do not share at least one name in common amongst all the segments. Are you sure you wish to continue straightening?',
               LongJnMoveConfirm: 'One or more of the junction nodes that are to be moved would be moved further than 10m. Are you sure you wish to continue straightening?',
-              MicroDogLegsConfirm:
-                'Geometry nodes detected within 2m of junctions (possible micro dog legs). Continue straightening anyway?',
+              MicroDogLegsConfirm: 'Geometry nodes detected within 2m of junctions (possible micro dog legs). Continue straightening anyway?',
               NonContinuousConfirm: 'You selected segments that do not all connect. Are you sure you wish to continue straightening?',
               SanityCheckConfirm: 'You selected many segments. Are you sure you wish to continue straightening?',
             },
@@ -1434,7 +1428,6 @@
           return null;
         }
       },
-
       /**
        * Creates a card div with an icon header and returns { card, body }
        */
@@ -1455,7 +1448,6 @@
         card.appendChild(body);
         return { card, body };
       },
-
       /**
        * Creates a flex row with a label on left and control on right
        * @param {string} labelText - Label to display
@@ -1482,7 +1474,6 @@
         row.appendChild(control);
         return row;
       },
-
       /**
        * Creates a <select> element wired to onSelectionChange
        */
@@ -1500,7 +1491,6 @@
         select.addEventListener('change', onSelectionChange);
         return select;
       },
-
       /**
        * Creates the "WME Straighten Up!" button for insertion into Segment Edit panel
        * Simplified button without card header for better space utilization
@@ -1553,7 +1543,6 @@
 
         return formGroup;
       },
-
       tabContent = () => {
         const docFrags = document.createDocumentFragment();
         logDebug('Building sidebar tab content...');
@@ -1621,46 +1610,13 @@
         // (Button now inserted into Segment Edit panel via jQuery segment.wme event)
         // ────────────────────────────────────────────────────────────────────────────────
         const validationCard = makeCard('fa-check-circle', 'Validation Settings');
+        validationCard.body.appendChild(makeRow(I18n.t('wmesu.settings.SanityCheck'), makeSelect('sanityCheck'), undefined, I18n.t('wmesu.settings.SanityCheckTitle')));
         validationCard.body.appendChild(
-          makeRow(
-            I18n.t('wmesu.settings.SanityCheck'),
-            makeSelect('sanityCheck'),
-            undefined,
-            I18n.t('wmesu.settings.SanityCheckTitle'),
-          ),
+          makeRow(I18n.t('wmesu.settings.NonContinuousSelection'), makeSelect('nonContinuousSelection'), undefined, I18n.t('wmesu.settings.NonContinuousSelectionTitle')),
         );
-        validationCard.body.appendChild(
-          makeRow(
-            I18n.t('wmesu.settings.NonContinuousSelection'),
-            makeSelect('nonContinuousSelection'),
-            undefined,
-            I18n.t('wmesu.settings.NonContinuousSelectionTitle'),
-          ),
-        );
-        validationCard.body.appendChild(
-          makeRow(
-            I18n.t('wmesu.settings.ConflictingNames'),
-            makeSelect('conflictingNames'),
-            undefined,
-            I18n.t('wmesu.settings.ConflictingNamesTitle'),
-          ),
-        );
-        validationCard.body.appendChild(
-          makeRow(
-            I18n.t('wmesu.settings.MicroDogLegs'),
-            makeSelect('microDogLegs'),
-            undefined,
-            I18n.t('wmesu.settings.MicroDogLegsTitle'),
-          ),
-        );
-        validationCard.body.appendChild(
-          makeRow(
-            I18n.t('wmesu.settings.LongJnMove'),
-            makeSelect('longJnMove'),
-            undefined,
-            I18n.t('wmesu.settings.LongJnMoveTitle'),
-          ),
-        );
+        validationCard.body.appendChild(makeRow(I18n.t('wmesu.settings.ConflictingNames'), makeSelect('conflictingNames'), undefined, I18n.t('wmesu.settings.ConflictingNamesTitle')));
+        validationCard.body.appendChild(makeRow(I18n.t('wmesu.settings.MicroDogLegs'), makeSelect('microDogLegs'), undefined, I18n.t('wmesu.settings.MicroDogLegsTitle')));
+        validationCard.body.appendChild(makeRow(I18n.t('wmesu.settings.LongJnMove'), makeSelect('longJnMove'), undefined, I18n.t('wmesu.settings.LongJnMoveTitle')));
         docFrags.appendChild(validationCard.card);
 
         // ────────────────────────────────────────────────────────────────────────────────
@@ -1823,7 +1779,7 @@
     // Debug: Log all jQuery events to see what's firing
     if (debug) {
       const originalTrigger = jQuery.fn.trigger;
-      jQuery.fn.trigger = function(eventType, ...args) {
+      jQuery.fn.trigger = function (eventType, ...args) {
         if (typeof eventType === 'string') {
           if (eventType.includes('.wme')) {
             logDebug(`jQuery event TRIGGERED: ${eventType}`);
@@ -1953,9 +1909,8 @@
           return;
         }
 
-        const hasEditableSegments = models.some(model =>
-          wmeSdk.DataModel.Segments.isRoadTypeDrivable?.({ roadType: model.roadType }) &&
-          wmeSdk.DataModel.Segments.hasPermissions?.({ segmentId: model.id })
+        const hasEditableSegments = models.some(
+          (model) => wmeSdk.DataModel.Segments.isRoadTypeDrivable?.({ roadType: model.roadType }) && wmeSdk.DataModel.Segments.hasPermissions?.({ segmentId: model.id }),
         );
 
         if (!hasEditableSegments) {
@@ -1999,7 +1954,7 @@
 
         // Remove button elements from DOM
         document.getElementById('WME-SU-SEGMENT-EDIT')?.remove();
-        document.querySelectorAll('div.wme-su-segment-edit-panel').forEach(el => el.remove());
+        document.querySelectorAll('div.wme-su-segment-edit-panel').forEach((el) => el.remove());
 
         // Clear any pending observer timeouts
         if (observerTimeout) {
