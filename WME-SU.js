@@ -1755,26 +1755,30 @@
         const simplifyCard = makeCard('fa-compress', 'Simplify Options');
         const toleranceRow = document.createElement('div');
         toleranceRow.className = 'su-row';
-        toleranceRow.style.justifyContent = 'space-between';
+        toleranceRow.style.justifyContent = 'flex-start';
         toleranceRow.style.alignItems = 'center';
-        toleranceRow.style.flexWrap = 'wrap';
-        toleranceRow.style.gap = '8px';
+        toleranceRow.style.gap = '4px';
+        toleranceRow.style.flexWrap = 'nowrap';
+        toleranceRow.style.padding = '5px 10px';
 
         const toleranceLabel = document.createElement('label');
-        toleranceLabel.textContent = 'Simplify Tolerance:';
-        toleranceLabel.style.fontSize = '12px';
-        toleranceLabel.style.fontWeight = '500';
+        toleranceLabel.textContent = 'Tolerance:';
+        toleranceLabel.style.fontSize = '11px';
+        toleranceLabel.style.fontWeight = '600';
+        toleranceLabel.style.whiteSpace = 'nowrap';
+        toleranceLabel.style.flexShrink = 0;
 
         const toleranceChips = document.createElement('div');
         toleranceChips.style.display = 'flex';
-        toleranceChips.style.gap = '6px';
-        toleranceChips.style.flexWrap = 'wrap';
+        toleranceChips.style.gap = '3px';
+        toleranceChips.style.flexWrap = 'nowrap';
+        toleranceChips.style.flex = '1';
 
         const toleranceOptions = [
-          { value: 1, label: 'Low (1m)' },
-          { value: 3, label: 'Medium (3m)' },
-          { value: 5, label: 'High (5m)' },
-          { value: 10, label: 'Max (10m)' },
+          { value: 1, label: '1m' },
+          { value: 3, label: '3m' },
+          { value: 5, label: '5m' },
+          { value: 10, label: '10m' },
         ];
 
         // Store button refs for toggling selected state
@@ -1787,8 +1791,9 @@
             {
               id: `WMESU-toleranceBtn-${opt.value}`,
               color: isSelected ? 'primary' : 'outline',
-              size: 'sm',
+              size: 'xs',
               textContent: opt.label,
+              style: 'padding: 2px 6px; font-size: 10px; min-width: 32px;',
             },
             [
               {
@@ -1816,11 +1821,10 @@
         simplifyCard.body.appendChild(toleranceRow);
 
         const toleranceHelp = document.createElement('div');
-        toleranceHelp.className = 'su-row';
-        toleranceHelp.style.fontSize = '11px';
-        toleranceHelp.style.color = '#666';
-        toleranceHelp.style.padding = '5px 10px';
-        toleranceHelp.textContent = 'Lower = more detail preserved, Higher = more aggressive simplification';
+        toleranceHelp.style.fontSize = '10px';
+        toleranceHelp.style.color = '#999';
+        toleranceHelp.style.padding = '4px 10px 0 10px';
+        toleranceHelp.textContent = 'Lower = detail, Higher = aggressive';
         simplifyCard.body.appendChild(toleranceHelp);
 
         docFrags.appendChild(simplifyCard.card);
