@@ -1674,13 +1674,6 @@
           '.wme-su-panel .su-info-icon:hover { opacity: 1; }',
           '.wme-su-panel .su-info-icon::before { content: "ⓘ"; }',
           '.wme-su-panel .su-info-icon:hover::after { content: attr(data-tooltip); display: block; position: absolute; bottom: 100%; left: -60px; right: auto; background: #1a1a1a; color: #fff; padding: 6px 8px; border-radius: 4px; font-size: 9px; white-space: normal; width: 130px; z-index: 10000; line-height: 1.3; box-shadow: 0 2px 8px rgba(0,0,0,0.3); font-weight: 400; margin-bottom: 4px; }',
-          '.wme-su-panel wz-chip { cursor: pointer; }',
-          '.wme-su-panel wz-chip[selected] { background-color: #0066cc !important; color: #fff !important; }',
-          '.wme-su-panel wz-chip:not([selected]) { background-color: #f0f0f0 !important; color: #333 !important; border: 1px solid #ccc !important; }',
-          '.wme-su-panel wz-chip:hover:not([selected]) { background-color: #e0e0e0 !important; border-color: #999 !important; }',
-          '[wz-theme="dark"] .wme-su-panel wz-chip[selected] { background-color: #0066cc !important; color: #fff !important; }',
-          '[wz-theme="dark"] .wme-su-panel wz-chip:not([selected]) { background-color: #2a2c30 !important; color: #e8eaed !important; border: 1px solid #555 !important; }',
-          '[wz-theme="dark"] .wme-su-panel wz-chip:hover:not([selected]) { background-color: #333538 !important; border-color: #777 !important; }',
           '[wz-theme="dark"] .wme-su-panel .su-header { background: linear-gradient(135deg, #0052a3, #003d7a); }',
           '[wz-theme="dark"] .wme-su-panel .su-card-header { background: linear-gradient(135deg, #2a2c30, #202124); color: #e8eaed; }',
           '[wz-theme="dark"] .wme-su-panel .su-card-header:hover { background: linear-gradient(135deg, #333538, #2a2c30); }',
@@ -1774,7 +1767,7 @@
 
         const toleranceChips = document.createElement('div');
         toleranceChips.style.display = 'flex';
-        toleranceChips.style.gap = '4px';
+        toleranceChips.style.gap = '6px';
         toleranceChips.style.flexWrap = 'wrap';
 
         const toleranceOptions = [
@@ -1784,22 +1777,28 @@
           { value: 10, label: 'Max (10m)' },
         ];
 
+        // Store button refs for toggling selected state
+        const toleranceButtons = {};
+
         toleranceOptions.forEach((opt) => {
-          const chip = createElem(
-            'wz-chip',
+          const isSelected = settings.simplifyTolerance === opt.value;
+          const btn = createElem(
+            'wz-button',
             {
-              id: `WMESU-toleranceChip-${opt.value}`,
-              selected: settings.simplifyTolerance === opt.value ? true : undefined,
+              id: `WMESU-toleranceBtn-${opt.value}`,
+              color: isSelected ? 'primary' : 'outline',
               size: 'sm',
               textContent: opt.label,
             },
             [
               {
                 click: () => {
-                  // Update all chips
+                  // Update all buttons: selected = primary, others = outline
                   toleranceOptions.forEach((o) => {
-                    const el = document.getElementById(`WMESU-toleranceChip-${o.value}`);
-                    if (el) el.selected = o.value === opt.value;
+                    const btn = toleranceButtons[o.value];
+                    if (btn) {
+                      btn.color = o.value === opt.value ? 'primary' : 'outline';
+                    }
                   });
                   settings.simplifyTolerance = opt.value;
                   saveSettingsToStorage();
@@ -1808,7 +1807,8 @@
               },
             ],
           );
-          toleranceChips.appendChild(chip);
+          toleranceButtons[opt.value] = btn;
+          toleranceChips.appendChild(btn);
         });
 
         toleranceRow.appendChild(toleranceLabel);
