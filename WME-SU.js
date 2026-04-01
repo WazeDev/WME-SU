@@ -1757,20 +1757,21 @@
         toleranceRow.className = 'su-row';
         toleranceRow.style.justifyContent = 'flex-start';
         toleranceRow.style.alignItems = 'center';
-        toleranceRow.style.gap = '4px';
+        toleranceRow.style.gap = '3px';
         toleranceRow.style.flexWrap = 'nowrap';
-        toleranceRow.style.padding = '5px 10px';
+        toleranceRow.style.padding = '5px 6px';
 
         const toleranceLabel = document.createElement('label');
-        toleranceLabel.textContent = 'Tolerance:';
-        toleranceLabel.style.fontSize = '11px';
+        toleranceLabel.textContent = 'Tol:';
+        toleranceLabel.style.fontSize = '10px';
         toleranceLabel.style.fontWeight = '600';
         toleranceLabel.style.whiteSpace = 'nowrap';
         toleranceLabel.style.flexShrink = 0;
+        toleranceLabel.style.marginRight = '2px';
 
         const toleranceChips = document.createElement('div');
         toleranceChips.style.display = 'flex';
-        toleranceChips.style.gap = '3px';
+        toleranceChips.style.gap = '2px';
         toleranceChips.style.flexWrap = 'nowrap';
         toleranceChips.style.flex = '1';
 
@@ -1778,7 +1779,7 @@
           { value: 1, label: '1m' },
           { value: 3, label: '3m' },
           { value: 5, label: '5m' },
-          { value: 10, label: '10m' },
+          { value: 10, label: '10' },
         ];
 
         // Store button refs for toggling selected state
@@ -1793,7 +1794,7 @@
               color: isSelected ? 'primary' : 'outline',
               size: 'xs',
               textContent: opt.label,
-              style: 'padding: 2px 6px; font-size: 10px; min-width: 32px;',
+              style: 'padding: 1px 4px; font-size: 9px; min-width: 28px;',
             },
             [
               {
