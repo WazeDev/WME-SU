@@ -242,7 +242,3 @@ All changes are performed via the WME SDK and immediately saved to WME. Use **Ct
 GPLv3
 
 ---
-
-## Feedback & Issues
-
-- Report issues or suggest features: [GreasyFork Comments](https://greasyfork.org/scripts/388349-wme-straighten-up/comments)
