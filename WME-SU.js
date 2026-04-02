@@ -1149,6 +1149,79 @@
    * Updates "Do It" button state based on current segment selection
    * Enables button only when segments are selected
    */
+  /**
+   * Creates a card div with an icon header and returns { card, body }
+   */
+  function makeCard(iconClass, title) {
+    const card = document.createElement('div');
+    card.className = 'su-card';
+    const cardHeader = document.createElement('div');
+    cardHeader.className = 'su-card-header';
+    const icon = document.createElement('i');
+    icon.className = `fa ${iconClass}`;
+    const titleSpan = document.createElement('span');
+    titleSpan.textContent = title;
+    cardHeader.appendChild(icon);
+    cardHeader.appendChild(titleSpan);
+    card.appendChild(cardHeader);
+    const body = document.createElement('div');
+    body.className = 'su-card-body';
+    card.appendChild(body);
+    return { card, body };
+  }
+
+  /**
+   * Creates the "WME Straighten Up!" button panel for insertion into Segment Edit panel
+   * @returns {HTMLElement} form-group element containing the buttons
+   */
+  function createSegmentEditButtonPanel() {
+    const formGroup = document.createElement('div');
+    formGroup.className = 'form-group wme-su-segment-edit-panel';
+    formGroup.style.marginBottom = '12px';
+
+    // Card with title
+    const buttonCard = makeCard('fa-arrows', 'WME Straighten Up!');
+
+    // Buttons container (flex row for side-by-side layout)
+    const buttonsContainer = document.createElement('div');
+    buttonsContainer.style.display = 'flex';
+    buttonsContainer.style.gap = '8px';
+    buttonsContainer.style.padding = '10px';
+
+    // "Straighten" button
+    const straightenBtn = createElem(
+      'wz-button',
+      {
+        id: 'WME-SU-SEGMENT-EDIT',
+        color: 'outline',
+        size: 'sm',
+        style: 'height: 26px;',
+        textContent: 'Straighten',
+      },
+      [{ click: doStraightenSegments }],
+    );
+    buttonsContainer.appendChild(straightenBtn);
+
+    // "Simplify" button
+    const simplifyBtn = createElem(
+      'wz-button',
+      {
+        id: 'WME-SU-SIMPLIFY',
+        color: 'outline',
+        size: 'sm',
+        style: 'height: 28px;',
+        textContent: 'Simplify',
+      },
+      [{ click: () => doSimplifySegments(false, false, settings.simplifyTolerance) }],
+    );
+    buttonsContainer.appendChild(simplifyBtn);
+
+    buttonCard.body.appendChild(buttonsContainer);
+    formGroup.appendChild(buttonCard.card);
+
+    return formGroup;
+  }
+
   // MutationObserver for watching form changes and reinserting buttons
   let formObserver = null;
   let isInsertingButton = false;  // Guard against infinite loops
@@ -1418,26 +1491,6 @@
       // ────────────────────────────────────────────────────────────────────────────────
 
       /**
-       * Creates a card div with an icon header and returns { card, body }
-       */
-      makeCard = (iconClass, title) => {
-        const card = document.createElement('div');
-        card.className = 'su-card';
-        const cardHeader = document.createElement('div');
-        cardHeader.className = 'su-card-header';
-        const icon = document.createElement('i');
-        icon.className = `fa ${iconClass}`;
-        const titleSpan = document.createElement('span');
-        titleSpan.textContent = title;
-        cardHeader.appendChild(icon);
-        cardHeader.appendChild(titleSpan);
-        card.appendChild(cardHeader);
-        const body = document.createElement('div');
-        body.className = 'su-card-body';
-        card.appendChild(body);
-        return { card, body };
-      },
-      /**
        * Creates a flex row with a label on left and control on right
        * @param {string} labelText - Label to display
        * @param {Element} control - Control element (select, etc.)
@@ -1479,58 +1532,6 @@
 
         select.addEventListener('change', onSelectionChange);
         return select;
-      },
-      /**
-       * Creates the "WME Straighten Up!" button for insertion into Segment Edit panel
-       * Simplified button without card header for better space utilization
-       * @returns {HTMLElement} form-group element containing the button
-       */
-      createSegmentEditButtonPanel = () => {
-        const formGroup = document.createElement('div');
-        formGroup.className = 'form-group wme-su-segment-edit-panel';
-        formGroup.style.marginBottom = '12px';
-
-        // Card with title
-        const buttonCard = makeCard('fa-arrows', 'WME Straighten Up!');
-
-        // Buttons container (flex row for side-by-side layout)
-        const buttonsContainer = document.createElement('div');
-        buttonsContainer.style.display = 'flex';
-        buttonsContainer.style.gap = '8px';
-        buttonsContainer.style.padding = '10px';
-
-        // "Straighten" button styled as chip
-        const straightenBtn = createElem(
-          'wz-button',
-          {
-            id: 'WME-SU-SEGMENT-EDIT',
-            color: 'outline',
-            size: 'sm',
-            style: 'height: 26px;',
-            textContent: 'Straighten',
-          },
-          [{ click: doStraightenSegments }],
-        );
-        buttonsContainer.appendChild(straightenBtn);
-
-        // "Simplify" button styled as chip
-        const simplifyBtn = createElem(
-          'wz-button',
-          {
-            id: 'WME-SU-SIMPLIFY',
-            color: 'outline',
-            size: 'sm',
-            style: 'height: 28px;',
-            textContent: 'Simplify',
-          },
-          [{ click: () => doSimplifySegments(false, false, settings.simplifyTolerance) }],
-        );
-        buttonsContainer.appendChild(simplifyBtn);
-
-        buttonCard.body.appendChild(buttonsContainer);
-        formGroup.appendChild(buttonCard.card);
-
-        return formGroup;
       },
       tabContent = () => {
         const docFrags = document.createDocumentFragment();
