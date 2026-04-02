@@ -1149,63 +1149,93 @@
    * Updates "Do It" button state based on current segment selection
    * Enables button only when segments are selected
    */
+  // MutationObserver for watching form changes and reinserting buttons
+  let formObserver = null;
+  let isInsertingButton = false;  // Guard against infinite loops
+
+  function setupButtonObserver(contentsDiv) {
+    // Stop any existing observer
+    if (formObserver) {
+      formObserver.disconnect();
+      formObserver = null;
+    }
+
+    // Create new observer that watches for form changes
+    formObserver = new MutationObserver((_mutations) => {
+      // Skip if we're already in the process of inserting
+      if (isInsertingButton) return;
+
+      // Look for form changes or segment-feature-editor changes
+      const form = contentsDiv.querySelector('form.attributes-form') || contentsDiv.querySelector('form');
+      const existingPanel = contentsDiv.querySelector('.wme-su-segment-edit-panel');
+
+      if (form && !existingPanel) {
+        // Form exists but button doesn't - insert it
+        isInsertingButton = true;
+        try {
+          const panel = createSegmentEditButtonPanel();
+          form.insertAdjacentElement('afterend', panel);
+        } catch (err) {
+          logError(`Error inserting button via observer: ${err.message}`);
+        } finally {
+          isInsertingButton = false;
+        }
+      }
+    });
+
+    // Watch the contents div for form changes
+    formObserver.observe(contentsDiv, {
+      childList: true,
+      subtree: true,
+      attributes: false,
+    });
+  }
+
   function insertSimplifyStreetGeometryButtons() {
-    // Check if we actually have a selection
-    const selection = wmeSdk.Editing.getSelection();
-    // Button can be in Segment Edit panel (new) or sidebar (legacy)
-    const btn = document.getElementById('WME-SU-SEGMENT-EDIT') || document.getElementById('WME-SU');
+    try {
+      // Check if we actually have a selection
+      const selection = wmeSdk.Editing.getSelection();
 
-    if (!selection || selection.objectType !== 'segment' || !selection.ids || selection.ids.length === 0) {
-      logDebug('No segments selected. Disabling button if found.');
-      if (btn) btn.disabled = true;
-      return;
-    }
-
-    // If button doesn't exist yet, try to insert it into the Segment Edit panel
-    if (!btn) {
-      logDebug('Button not found, attempting to insert into Segment Edit panel');
-      // Try multiple strategies to find the Segment Edit panel
-      let segmentEditPanel = null;
-
-      // Strategy 1: Look for form-group elements (what WME-SIMPLE uses)
-      segmentEditPanel = document.querySelector('div.form-group');
-      if (segmentEditPanel) logDebug('Found Segment Edit panel via form-group selector');
-
-      // Strategy 2: Look for WME's panel component
-      if (!segmentEditPanel) {
-        segmentEditPanel = document.querySelector('wz-card, [role="region"]');
-        if (segmentEditPanel) logDebug('Found Segment Edit panel via wz-card/region selector');
+      if (!selection || selection.objectType !== 'segment' || !selection.ids || selection.ids.length === 0) {
+        return;
       }
 
-      // Strategy 3: Look in the main editor area
-      if (!segmentEditPanel) {
-        const mainEditor = document.querySelector('[class*="edit"], [id*="edit"]');
-        if (mainEditor) {
-          segmentEditPanel = mainEditor.querySelector('form, div[role="region"]');
-          if (segmentEditPanel) logDebug('Found Segment Edit panel in main editor area');
+      // Get the segment edit panel
+      const editPanel = document.getElementById('edit-panel');
+      const contentsDiv = editPanel?.querySelector('div.contents');
+
+      if (!contentsDiv) {
+        return;
+      }
+
+      // Remove any existing button panel before we add a new one
+      const existingPanel = contentsDiv.querySelector('.wme-su-segment-edit-panel');
+      if (existingPanel) {
+        existingPanel.remove();
+      }
+
+      // Try immediate insert
+      try {
+        const form = contentsDiv.querySelector('form.attributes-form') || contentsDiv.querySelector('form');
+        if (form) {
+          isInsertingButton = true;
+          try {
+            const panel = createSegmentEditButtonPanel();
+            form.insertAdjacentElement('afterend', panel);
+          } finally {
+            isInsertingButton = false;
+          }
         }
+      } catch (err) {
+        logError(`Failed to insert button: ${err.message}`);
       }
 
-      if (segmentEditPanel) {
-        logDebug('Found Segment Edit panel, inserting button');
-        const newPanel = createSegmentEditButtonPanel();
-        // Check if we already have one
-        const existing = segmentEditPanel.querySelector('div.wme-su-segment-edit-panel');
-        if (existing) {
-          existing.replaceWith(newPanel);
-          logDebug('Replaced existing button panel');
-        } else {
-          segmentEditPanel.prepend(newPanel);
-          logDebug('Prepended new button panel');
-        }
-      } else {
-        logDebug('Could not find Segment Edit panel using any strategy');
-      }
-      return;
+      // Setup observer to handle future form changes
+      setupButtonObserver(contentsDiv);
+
+    } catch (err) {
+      logError(`insertSimplifyStreetGeometryButtons error: ${err.message}`);
     }
-
-    logDebug(`${selection.ids.length} segments selected. Enabling button.`);
-    btn.disabled = false;
   }
 
   /**
@@ -1387,47 +1417,6 @@
       // HELPER FUNCTIONS: UI construction for card-based layout
       // ────────────────────────────────────────────────────────────────────────────────
 
-      /**
-       * Find Direction section with resilient multi-strategy selector
-       * Handles WME UI refactoring by trying multiple selectors
-       * @param {Element} [searchContext=document] - Element to search within
-       * @returns {Element|null} Direction section element or null if not found
-       */
-      findDirectionSection = (searchContext = document) => {
-        try {
-          // Strategy 1: Primary selector (current WME structure)
-          let directionEl = searchContext.querySelector('[class*="direction-editor"]');
-          if (directionEl) return directionEl;
-
-          // Strategy 2: Alternative class patterns (for future WME versions)
-          directionEl = searchContext.querySelector('[class*="direction"]');
-          if (directionEl && directionEl.textContent.toLowerCase().includes('two way')) {
-            return directionEl;
-          }
-
-          // Strategy 3: Find wz-label containing "Direction" text
-          const labels = Array.from(searchContext.querySelectorAll('wz-label'));
-          for (const label of labels) {
-            if (label.textContent.includes('Direction')) {
-              // Return the closest containing div (the direction control section)
-              return label.closest('div[class*="direction"]') || label.closest('div');
-            }
-          }
-
-          // Strategy 4: Look for text content pattern (fallback)
-          const allDivs = Array.from(searchContext.querySelectorAll('div'));
-          for (const div of allDivs) {
-            if (div.textContent.includes('Two way') && div.textContent.includes('direction')) {
-              return div;
-            }
-          }
-
-          return null;
-        } catch (err) {
-          logWarning('Error finding direction section:', err);
-          return null;
-        }
-      },
       /**
        * Creates a card div with an icon header and returns { card, body }
        */
@@ -1746,7 +1735,6 @@
     tabPane.className = 'wme-su-panel';
     tabPane.appendChild(tabContent());
     tabPane.id = 'WMESUSettings';
-    logDebug('Enabling MOs.');
     // Listen to selection changes using SDK
     wmeSdk.Events.on({
       eventName: 'wme-selection-changed',
@@ -1755,193 +1743,6 @@
     // Check initial selection
     const initialSelection = wmeSdk.Editing.getSelection();
     if (initialSelection && initialSelection.objectType === 'segment' && initialSelection.ids?.length > 0) insertSimplifyStreetGeometryButtons();
-
-    // ────────────────────────────────────────────────────────────────────────────────
-    // Register jQuery event handlers for Segment Edit panel button insertion
-    // WME fires 'segment.wme' when single segment is selected for editing
-    // WME fires 'segments.wme' when multiple segments are selected (not used in current context)
-    // ────────────────────────────────────────────────────────────────────────────────
-
-    // Verify dependencies are ready
-    if (typeof $ === 'undefined' || typeof jQuery === 'undefined') {
-      logError('jQuery NOT available! segment.wme events cannot be registered.');
-    } else {
-      logDebug(`jQuery v${jQuery.fn.jquery || 'unknown'} available, registering event handlers`);
-    }
-
-    // Verify SDK is fully initialized
-    if (!wmeSdk?.Editing?.getSelection || !wmeSdk?.DataModel?.Segments) {
-      logError('SDK not fully initialized! Some features may not work.');
-    } else {
-      logDebug('SDK verified and ready');
-    }
-
-    // Debug: Log all jQuery events to see what's firing
-    if (debug) {
-      const originalTrigger = jQuery.fn.trigger;
-      jQuery.fn.trigger = function (eventType, ...args) {
-        if (typeof eventType === 'string') {
-          if (eventType.includes('.wme')) {
-            logDebug(`jQuery event TRIGGERED: ${eventType}`);
-          } else if (eventType.includes('segment') || eventType.includes('node') || eventType.includes('place')) {
-            logDebug(`jQuery event TRIGGERED (non-.wme): ${eventType}`);
-          }
-        }
-        return originalTrigger.call(this, eventType, ...args);
-      };
-      logDebug('jQuery event trigger monitoring enabled (logging .wme and object-related events)');
-    }
-
-    // Listen for segment.wme jQuery events (fallback if WME starts firing them)
-    $(document).on('segment.wme', (_event, element, model) => {
-      logDebug(`segment.wme fired for segment ${model?.id}`);
-
-      try {
-        // Check permissions
-        if (!wmeSdk?.DataModel?.Segments?.hasPermissions) {
-          logWarning('SDK not ready for permission check');
-          return;
-        }
-
-        if (!wmeSdk.DataModel.Segments.hasPermissions({ segmentId: model.id })) {
-          element.querySelector('div.wme-su-segment-edit-panel')?.remove();
-          return;
-        }
-
-        const existingPanel = element.querySelector('div.wme-su-segment-edit-panel');
-        if (existingPanel) {
-          return;
-        }
-
-        // Use resilient selector to find Direction section
-        const directionSection = findDirectionSection(element);
-
-        if (directionSection) {
-          try {
-            const panel = createSegmentEditButtonPanel();
-            directionSection.insertAdjacentElement('afterend', panel);
-          } catch (insertErr) {
-            logWarning('Failed to insert after Direction:', insertErr);
-            element.prepend(createSegmentEditButtonPanel());
-          }
-        } else {
-          // Fallback to prepending
-          element.prepend(createSegmentEditButtonPanel());
-        }
-      } catch (err) {
-        logError('Error in segment.wme handler:', err);
-      }
-    });
-
-    // Fallback: Use MutationObserver to detect when Segment Edit panel changes
-    // (segment.wme jQuery events don't fire in current WME version)
-    // With debouncing to prevent excessive DOM operations
-    let observerTimeout;
-    const observer = new MutationObserver((_mutations) => {
-      // Debounce: only run insertion check after DOM mutations settle
-      clearTimeout(observerTimeout);
-      observerTimeout = setTimeout(() => {
-        try {
-          // Verify SDK is ready and segments are selected
-          if (!wmeSdk?.Editing?.getSelection) {
-            return;
-          }
-
-          const selection = wmeSdk.Editing.getSelection();
-          if (selection?.objectType !== 'segment' || !selection?.ids?.length) {
-            return;
-          }
-
-          // Check if button already exists
-          const existingButton = document.getElementById('WME-SU-SEGMENT-EDIT');
-          if (existingButton) {
-            return;
-          }
-
-          // Try to find Direction section using resilient selector
-          const directionSection = findDirectionSection();
-
-          if (directionSection) {
-            try {
-              // Check if button already in parent context
-              if (!directionSection.parentElement.querySelector('div.wme-su-segment-edit-panel')) {
-                const panel = createSegmentEditButtonPanel();
-                directionSection.insertAdjacentElement('afterend', panel);
-                logDebug('Button inserted after Direction section');
-              }
-            } catch (insertErr) {
-              logWarning('Failed to insert after Direction section:', insertErr);
-              // Fallback: try attributes form
-              const attributesForm = document.querySelector('form.attributes-form');
-              if (attributesForm && !attributesForm.querySelector('div.wme-su-segment-edit-panel')) {
-                const panel = createSegmentEditButtonPanel();
-                attributesForm.prepend(panel);
-                logDebug('Button inserted into attributes form (fallback)');
-              }
-            }
-          } else {
-            // Direction section not found, try fallback
-            const attributesForm = document.querySelector('form.attributes-form');
-            if (attributesForm && !attributesForm.querySelector('div.wme-su-segment-edit-panel')) {
-              const panel = createSegmentEditButtonPanel();
-              attributesForm.prepend(panel);
-              logDebug('Button inserted into attributes form (fallback)');
-            }
-          }
-        } catch (err) {
-          logError('MutationObserver error:', err);
-        }
-      }, 100); // Wait 100ms for DOM to settle
-    });
-
-    // Only watch segment edit panel if we can find it, otherwise watch body
-    const segmentEditPanel = document.querySelector('[id*="segment-edit"]') || document.body;
-    observer.observe(segmentEditPanel, { childList: true, subtree: true });
-    logDebug('MutationObserver activated with debouncing');
-
-    $(document).on('segments.wme', (_event, element, models) => {
-      logDebug(`segments.wme fired for ${models.length} segments`);
-
-      try {
-        // Verify SDK methods exist
-        if (!wmeSdk?.DataModel?.Segments) {
-          logWarning('SDK not ready for segments check');
-          return;
-        }
-
-        const hasEditableSegments = models.some(
-          (model) => wmeSdk.DataModel.Segments.isRoadTypeDrivable?.({ roadType: model.roadType }) && wmeSdk.DataModel.Segments.hasPermissions?.({ segmentId: model.id }),
-        );
-
-        if (!hasEditableSegments) {
-          element.querySelector('div.wme-su-segment-edit-panel')?.remove();
-          return;
-        }
-
-        const existingPanel = element.querySelector('div.wme-su-segment-edit-panel');
-        if (existingPanel) {
-          return;
-        }
-
-        // Use resilient selector to find Direction section
-        const directionSection = findDirectionSection(element);
-
-        if (directionSection) {
-          try {
-            const panel = createSegmentEditButtonPanel();
-            directionSection.insertAdjacentElement('afterend', panel);
-          } catch (insertErr) {
-            logWarning('Failed to insert after Direction:', insertErr);
-            element.prepend(createSegmentEditButtonPanel());
-          }
-        } else {
-          // Fallback to prepending
-          element.prepend(createSegmentEditButtonPanel());
-        }
-      } catch (err) {
-        logError('Error in segments.wme handler:', err);
-      }
-    });
 
     // Save settings and cleanup on page unload
     window.addEventListener('beforeunload', () => {
