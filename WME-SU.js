@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        WME Straighten Up!
 // @namespace   https://greasyfork.org/users/166843
-// @version     2026.03.31.02
+// @version     2026.04.06.00
 // @description Straighten selected WME segment(s) by aligning along straight line between two end points and removing geometry nodes.
 // @author      JS55CT
 // @match       http*://*.waze.com/*editor*
@@ -24,7 +24,7 @@
   // ── Script metadata ──────────────────────────────────────────────────
   const SHOW_UPDATE_MESSAGE = true;
 
-  const SCRIPT_VERSION_CHANGES = ['MAJOR UPDATE: NEW SDK VERSION', 'NEW Simplify option added'];
+  const SCRIPT_VERSION_CHANGES = ['Small Bug Fix for Shortcuts at load time!'];
 
   const SCRIPT_VERSION = GM_info.script.version.toString();
   const DOWNLOAD_URL = 'https://greasyfork.org/scripts/388349-wme-straighten-up/code/WME%20Straighten%20Up!.user.js';
@@ -169,16 +169,27 @@
       return { raw: null, combo: null };
     }
 
+    // Handle stringified JSON (edge case)
     if (typeof shortcutValue === 'string') {
-      // Old format: string value from previous version
-      logDebug(`Detected old shortcut format (${source}): "${shortcutValue}"`);
-      const raw = comboToRawKeycodes(shortcutValue);
-      const combo = shortcutKeycodesToCombo(raw);
-      if (raw && combo) {
-        logDebug(`Migrated shortcut from old format: RAW="${raw}", COMBO="${combo}"`);
-        return { raw, combo };
-      } else {
-        logWarning(`Failed to migrate old shortcut format (${source}), resetting to null`);
+      try {
+        // Try to parse if it's a stringified object
+        if (shortcutValue.startsWith('{')) {
+          shortcutValue = JSON.parse(shortcutValue);
+        } else {
+          // Old format: string value from previous version (e.g., "A+X")
+          logDebug(`Detected old shortcut format (${source}): "${shortcutValue}"`);
+          const raw = comboToRawKeycodes(shortcutValue);
+          const combo = shortcutKeycodesToCombo(raw);
+          if (raw && combo) {
+            logDebug(`Migrated shortcut from old format: RAW="${raw}", COMBO="${combo}"`);
+            return { raw, combo };
+          } else {
+            logWarning(`Failed to migrate old shortcut format (${source}), resetting to null`);
+            return { raw: null, combo: null };
+          }
+        }
+      } catch (e) {
+        logWarning(`Failed to parse shortcut string (${source}), resetting to null`);
         return { raw: null, combo: null };
       }
     }
@@ -190,7 +201,7 @@
         logDebug(`Loaded shortcut (${source}, valid): RAW="${shortcutValue.raw}", COMBO="${shortcutValue.combo}"`);
         return { raw: shortcutValue.raw, combo: shortcutValue.combo };
       }
-      if (shortcutValue.raw === null && shortcutValue.combo === null) {
+      if ((shortcutValue.raw === null || shortcutValue.raw === undefined) && (shortcutValue.combo === null || shortcutValue.combo === undefined)) {
         // Valid: no shortcut set
         logDebug(`Loaded shortcut (${source}): (none)`);
         return { raw: null, combo: null };
@@ -404,14 +415,6 @@
       logDebug('Settings migrated and saved to localStorage');
     }
 
-    const serverSettings = await WazeWrap.Remote.RetrieveSettings(SETTINGS_STORE_NAME);
-    if (serverSettings?.lastSaved > settings.lastSaved) {
-      $extend(settings, serverSettings);
-      logDebug('Server settings are newer, merged into local settings');
-
-      // Validate and migrate server shortcut using the same helper
-      settings.runStraightenUpShortcut = validateAndMigrateShortcut(settings.runStraightenUpShortcut, 'server');
-    }
     timeouts.saveSettingsToStorage = window.setTimeout(saveSettingsToStorage, 5000);
     return Promise.resolve();
   }
