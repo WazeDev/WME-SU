@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        WME Straighten Up!
 // @namespace   https://greasyfork.org/users/166843
-// @version     2026.04.06.00
+// @version     2026.04.06.01
 // @description Straighten selected WME segment(s) by aligning along straight line between two end points and removing geometry nodes.
 // @author      JS55CT
 // @match       http*://*.waze.com/*editor*
@@ -409,7 +409,6 @@
 
     // Save migrated settings so we don't need to migrate again on next load
     if (needsMigration) {
-      settings.lastVersion = SCRIPT_VERSION;
       settings.lastSaved = Date.now();
       localStorage.setItem(SETTINGS_STORE_NAME, JSON.stringify(settings));
       logDebug('Settings migrated and saved to localStorage');
@@ -468,6 +467,11 @@
         releaseNotes += '<ul><li>Nothing major.</li></ul>';
       }
       WazeWrap.Interface.ShowScriptUpdate(GM_info.script.name, SCRIPT_VERSION, releaseNotes, SCRIPT_PAGE_URL);
+
+      // Update version after alert is shown
+      settings.lastVersion = SCRIPT_VERSION;
+      settings.lastSaved = Date.now();
+      localStorage.setItem(SETTINGS_STORE_NAME, JSON.stringify(settings));
     }
   }
 
